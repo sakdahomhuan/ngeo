@@ -242,19 +242,17 @@ ngeo.profile = function(options) {
       }
 
       width = Math.max(this.clientWidth - margin.right - margin.left, 0);
-      x = d3.scale.linear().range([0, width]);
+      x = d3.scaleLinear().range([0, width]);
 
       height = Math.max(this.clientHeight - margin.top - margin.bottom, 0);
-      y = d3.scale.linear().range([height, 0]);
+      y = d3.scaleLinear().range([height, 0]);
 
-      var xAxis = d3.svg.axis().scale(x).orient('bottom');
-      var yAxis = d3.svg.axis()
-          .scale(y)
-          .orient('left');
+      var xAxis = d3.axisBottom(x);
+      var yAxis = d3.axisLeft(y);
 
       var area;
       if (numberOfLines === 1) {
-        area = d3.svg.area()
+        area = d3.area()
             .x(function(d) {
               return x(distanceExtractor(d));
             })
