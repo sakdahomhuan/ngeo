@@ -127317,6 +127317,17 @@ ngeo.Location.prototype.hasParam = function(key) {
 
 
 /**
+ * Check if a param exists in the fragment of the location's URI.
+ * @param {string} key Param key.
+ * @return {boolean} True if the param exists.
+ * @export
+ */
+ngeo.Location.prototype.hasFragmentParam = function(key) {
+  return this.getFragmentUri_().getQueryData().containsKey(key);
+};
+
+
+/**
  * Get a param in the location's URI.
  * @param {string} key Param key.
  * @return {string} Param value.
@@ -127328,6 +127339,17 @@ ngeo.Location.prototype.getParam = function(key) {
 
 
 /**
+ * Get a param from the fragment of the location's URI.
+ * @param {string} key Param key.
+ * @return {string} Param value.
+ * @export
+ */
+ngeo.Location.prototype.getFragmentParam = function(key) {
+  return /** @type {string} */ (this.getFragmentUri_().getQueryData().get(key));
+};
+
+
+/**
  * Get a param in the location's URI as integer. If the entry does not exist,
  * or if the value can not be parsed as integer, `undefined` is returned.
  * @param {string} key Param key.
@@ -127335,10 +127357,27 @@ ngeo.Location.prototype.getParam = function(key) {
  * @export
  */
 ngeo.Location.prototype.getParamAsInt = function(key) {
-  if (!this.hasParam(key)) {
+  var value = /** @type {string} */ (this.getParam(key));
+  if (value === undefined) {
     return undefined;
   }
-  var value = /** @type {string} */ (this.uri_.getQueryData().get(key));
+  var valueAsInt = parseInt(value, 10);
+  return (isNaN(valueAsInt)) ? undefined : valueAsInt;
+};
+
+
+/**
+ * Get a param from the fragment of the location's URI as integer. If the entry
+ * does not exist, or if the value can not be parsed as integer, `undefined` is returned.
+ * @param {string} key Param key.
+ * @return {number|undefined} Param value.
+ * @export
+ */
+ngeo.Location.prototype.getFragmentParamAsInt = function(key) {
+  var value = /** @type {string} */ (this.getFragmentParam(key));
+  if (value === undefined) {
+    return undefined;
+  }
   var valueAsInt = parseInt(value, 10);
   return (isNaN(valueAsInt)) ? undefined : valueAsInt;
 };
@@ -127355,6 +127394,16 @@ ngeo.Location.prototype.getParamKeys = function() {
 
 
 /**
+ * Get an array with all existing param's keys from the fragment of the location's URI.
+ * @return {Array.<string>} Param keys.
+ * @export
+ */
+ngeo.Location.prototype.getFragmentParamKeys = function() {
+  return this.getFragmentUri_().getQueryData().getKeys();
+};
+
+
+/**
  * Get an array with all existing param's keys in the location's URI that start
  * with the given prefix.
  * @param {string} prefix Key prefix.
@@ -127362,7 +127411,21 @@ ngeo.Location.prototype.getParamKeys = function() {
  * @export
  */
 ngeo.Location.prototype.getParamKeysWithPrefix = function(prefix) {
-  return this.uri_.getQueryData().getKeys().filter(function(key) {
+  return this.getParamKeys().filter(function(key) {
+    return key.indexOf(prefix) == 0;
+  });
+};
+
+
+/**
+ * Get an array with all existing param's keys from the fragment of the location's URI
+ * that start with the given prefix.
+ * @param {string} prefix Key prefix.
+ * @return {Array.<string>} Param keys.
+ * @export
+ */
+ngeo.Location.prototype.getFragmentParamKeysWithPrefix = function(prefix) {
+  return this.getFragmentParamKeys().filter(function(key) {
     return key.indexOf(prefix) == 0;
   });
 };
@@ -127382,12 +127445,39 @@ ngeo.Location.prototype.updateParams = function(params) {
 
 
 /**
+ * Set or create a param in the fragment of the location's URI.
+ * @param {Object.<string, string>} params Parameters.
+ * @export
+ */
+ngeo.Location.prototype.updateFragmentParams = function(params) {
+  var fragmentUri = this.getFragmentUri_();
+  var qd = fragmentUri.getQueryData();
+  goog.object.forEach(params, function(val, key) {
+    qd.set(key, val);
+  });
+  this.updateFragmentFromUri_(fragmentUri);
+};
+
+
+/**
  * Delete a param in the location's URI.
  * @param {string} key Param key.
  * @export
  */
 ngeo.Location.prototype.deleteParam = function(key) {
   this.uri_.getQueryData().remove(key);
+};
+
+
+/**
+ * Delete a param int the fragment of the location's URI.
+ * @param {string} key Param key.
+ * @export
+ */
+ngeo.Location.prototype.deleteFragmentParam = function(key) {
+  var fragmentUri = this.getFragmentUri_();
+  fragmentUri.getQueryData().remove(key);
+  this.updateFragmentFromUri_(fragmentUri);
 };
 
 
@@ -127407,6 +127497,32 @@ ngeo.Location.prototype.refresh = function() {
  */
 ngeo.Location.prototype.setPath = function(path) {
   this.uri_.setPath(path);
+};
+
+
+/**
+ * Return a {@link goog.Uri} instance where the fragment parameters are set
+ * as query parameters.
+ * @return {goog.Uri} An uri.
+ * @private
+ */
+ngeo.Location.prototype.getFragmentUri_ = function() {
+  var fragment = this.uri_.getFragment();
+  var uri = new goog.Uri(null);
+  uri.setQueryData(fragment);
+  return uri;
+};
+
+
+/**
+ * Update the fragment of the Uri with the given uri which contains
+ * fragment parameters as query params.
+ * @param {goog.Uri} fragmentUri An uri.
+ * @private
+ */
+ngeo.Location.prototype.updateFragmentFromUri_ = function(fragmentUri) {
+  var fragment = fragmentUri.getQueryData().toDecodedString();
+  this.uri_.setFragment(fragment);
 };
 
 
