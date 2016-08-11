@@ -14,12 +14,15 @@ app.module.constant('gmfTreeUrl',
 
 /**
  * @param {gmf.Themes} gmfThemes Themes service.
+ * @param {ngeo.FeatureOverlayMgr} ngeoFeatureOverlayMgr The ngeo feature overlay manager service.
  * @constructor
  * @ngInject
  */
-app.MainController = function(gmfThemes) {
+app.MainController = function(gmfThemes, ngeoFeatureOverlayMgr) {
 
   gmfThemes.loadThemes();
+
+  ngeoFeatureOverlayMgr.init(this.map);
 
   /**
    * @type {Array.<gmfx.SearchDirectiveDatasource>}
