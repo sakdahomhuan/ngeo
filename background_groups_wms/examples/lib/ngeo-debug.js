@@ -94986,10 +94986,10 @@ ngeo.LayerHelper.REFRESH_PARAM = 'random';
 
 
 /**
- * Create and return a basic WMS layer with only a source URL and a coma
+ * Create and return a basic WMS layer with only a source URL and a cmoma
  * separated layers names (see {@link ol.source.ImageWMS}).
  * @param {string} sourceURL The source URL.
- * @param {string} sourceLayersName A coma separated names string.
+ * @param {string} sourceLayersName A comma separated names string.
  * @param {string=} opt_serverType Type of the server ("mapserver",
  *     "geoserver", "qgisserver", …).
  * @param {string=} opt_time time parameter for layer queryable by time/periode
@@ -122162,30 +122162,30 @@ ngeo.format.FeatureHash.setStyleInFeature_ = function(text, feature) {
   }
   var fillColor, fontSize, fontColor, pointRadius, strokeColor, strokeWidth;
   var properties = ngeo.format.FeatureHash.getStyleProperties_(text, feature);
-  fillColor = properties.fillColor;
-  fontSize = properties.fontSize;
-  fontColor = properties.fontColor;
-  pointRadius = properties.pointRadius;
-  strokeColor = properties.strokeColor;
-  strokeWidth = properties.strokeWidth;
+  fillColor = properties['fillColor'];
+  fontSize = properties['fontSize'];
+  fontColor = properties['fontColor'];
+  pointRadius = properties['pointRadius'];
+  strokeColor = properties['strokeColor'];
+  strokeWidth = properties['strokeWidth'];
 
   var fillStyle = null;
   if (fillColor !== undefined) {
     fillStyle = new ol.style.Fill({
-      color: fillColor
+      color: /** @type {Array<number>|string} */ (fillColor)
     });
   }
   var strokeStyle = null;
   if (strokeColor !== undefined && strokeWidth !== undefined) {
     strokeStyle = new ol.style.Stroke({
-      color: strokeColor,
-      width: strokeWidth
+      color: /** @type {Array<number>|string} */ (strokeColor),
+      width: /** @type {number} */ (strokeWidth)
     });
   }
   var imageStyle = null;
   if (pointRadius !== undefined) {
     imageStyle = new ol.style.Circle({
-      radius: pointRadius,
+      radius: /** @type {number} */ (pointRadius),
       fill: fillStyle,
       stroke: strokeStyle
     });
@@ -122196,7 +122196,7 @@ ngeo.format.FeatureHash.setStyleInFeature_ = function(text, feature) {
     textStyle = new ol.style.Text({
       font: fontSize + ' sans-serif',
       fill: new ol.style.Fill({
-        color: fontColor
+        color: /** @type {Array<number>|string} */ (fontColor)
       })
     });
   }
@@ -126536,14 +126536,16 @@ ngeo.BackgroundLayerMgr.prototype.updateDimensions = function(map, dimensions) {
     layers.forEach(function(layer) {
       goog.asserts.assertInstanceof(layer, ol.layer.Layer);
       if (layer) {
+        var hasUpdates = false;
         var updatedDimensions = {};
         for (var key in layer.get('dimensions')) {
           var value = dimensions[key];
           if (value !== undefined) {
             updatedDimensions[key] = value;
+            hasUpdates = true;
           }
         }
-        if (!ol.object.isEmpty(dimensions)) {
+        if (hasUpdates) {
           var source = layer.getSource();
           if (source instanceof ol.source.WMTS) {
             source.updateDimensions(updatedDimensions);
