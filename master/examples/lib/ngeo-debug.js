@@ -96016,6 +96016,7 @@ goog.require('ol.interaction.DragBox');
  *        ngeo-bbox-query=""
  *        ngeo-bbox-query-map="::ctrl.map"
  *        ngeo-bbox-query-active="ctrl.queryActive">
+ *        ngeo-bbox-query-autoclear="ctrl.queryAutoClear">
  *      </span>
  *
  * See the live example: {@link ../examples/bboxquery.html}
@@ -96060,7 +96061,9 @@ ngeo.bboxQueryDirective = function(ngeoQuery) {
             } else {
               // deactivate
               map.removeInteraction(interaction);
-              ngeoQuery.clear();
+              if (scope.$eval(attrs['ngeoBboxQueryAutoclear']) !== false) {
+                ngeoQuery.clear();
+              }
             }
           }
       );
@@ -110046,7 +110049,8 @@ goog.require('ngeo.Query');
  *      <span
  *        ngeo-map-query=""
  *        ngeo-map-query-map="::ctrl.map"
- *        ngeo-map-query-active="ctrl.queryActive">
+ *        ngeo-map-query-active="ctrl.queryActive"
+ *        ngeo-map-query-autoclear="ctrl.queryAutoClear">
  *      </span>
  *
  * See our live example: {@link ../examples/mapquery.html}
@@ -110091,7 +110095,9 @@ ngeo.mapQueryDirective = function(ngeoQuery) {
           ol.events.unlistenByKey(clickEventKey_);
           clickEventKey_ = null;
         }
-        ngeoQuery.clear();
+        if (scope.$eval(attrs['ngeoMapQueryAutoclear']) !== false) {
+          ngeoQuery.clear();
+        }
       };
 
       // watch 'active' property -> activate/deactivate accordingly
