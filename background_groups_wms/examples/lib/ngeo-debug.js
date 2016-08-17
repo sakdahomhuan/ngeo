@@ -94986,7 +94986,7 @@ ngeo.LayerHelper.REFRESH_PARAM = 'random';
 
 
 /**
- * Create and return a basic WMS layer with only a source URL and a cmoma
+ * Create and return a basic WMS layer with only a source URL and a comma
  * separated layers names (see {@link ol.source.ImageWMS}).
  * @param {string} sourceURL The source URL.
  * @param {string} sourceLayersName A comma separated names string.
@@ -95032,7 +95032,7 @@ ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
  * @param {string} capabilitiesURL The getCapabilities url.
  * @param {string} layerName The name of the layer.
  * @param {Object.<string, string>=} opt_dimensions WMTS dimensions.
- * @return {angular.$q.Promise} A Promise with a layer (with source) on success,
+ * @return {angular.$q.Promise.<ol.layer.Tile>} A Promise with a layer (with source) on success,
  *     no layer else.
  * @export
  */
@@ -95168,7 +95168,7 @@ ngeo.LayerHelper.prototype.getLayerByName = function(layerName, layers) {
     if (layer instanceof ol.layer.Group) {
       var sublayers = layer.getLayers().getArray();
       found = this.getLayerByName(layerName, sublayers);
-    } else if (layer.get('layerName') === layerName) {
+    } else if (layer.get('layerNodeName') === layerName) {
       found = layer;
     }
     return !!found;
@@ -96019,6 +96019,7 @@ goog.require('ol.interaction.DragBox');
  *        ngeo-bbox-query=""
  *        ngeo-bbox-query-map="::ctrl.map"
  *        ngeo-bbox-query-active="ctrl.queryActive">
+ *        ngeo-bbox-query-autoclear="ctrl.queryAutoClear">
  *      </span>
  *
  * See the live example: {@link ../examples/bboxquery.html}
@@ -96063,7 +96064,9 @@ ngeo.bboxQueryDirective = function(ngeoQuery) {
             } else {
               // deactivate
               map.removeInteraction(interaction);
-              ngeoQuery.clear();
+              if (scope.$eval(attrs['ngeoBboxQueryAutoclear']) !== false) {
+                ngeoQuery.clear();
+              }
             }
           }
       );
@@ -110049,7 +110052,8 @@ goog.require('ngeo.Query');
  *      <span
  *        ngeo-map-query=""
  *        ngeo-map-query-map="::ctrl.map"
- *        ngeo-map-query-active="ctrl.queryActive">
+ *        ngeo-map-query-active="ctrl.queryActive"
+ *        ngeo-map-query-autoclear="ctrl.queryAutoClear">
  *      </span>
  *
  * See our live example: {@link ../examples/mapquery.html}
@@ -110094,7 +110098,9 @@ ngeo.mapQueryDirective = function(ngeoQuery) {
           ol.events.unlistenByKey(clickEventKey_);
           clickEventKey_ = null;
         }
-        ngeoQuery.clear();
+        if (scope.$eval(attrs['ngeoMapQueryAutoclear']) !== false) {
+          ngeoQuery.clear();
+        }
       };
 
       // watch 'active' property -> activate/deactivate accordingly

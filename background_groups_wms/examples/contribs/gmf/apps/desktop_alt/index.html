@@ -47,7 +47,7 @@
               data-toggle="tooltip" data-placement="left" data-original-title="{{'Login'|translate}}">
               <span class="fa fa-user"></span>
             </button>
-            <button ngeo-btn class="btn btn-default" ng-model="printActive"
+            <button ngeo-btn class="btn btn-default" ng-model="mainCtrl.printPanelActive"
               data-toggle="tooltip" data-placement="left" data-original-title="{{'Print'|translate}}">
               <span class="fa fa-print"></span>
             </button>
@@ -82,15 +82,15 @@
               <gmf-authentication></gmf-authentication>
             </div>
           </div>
-          <div ng-show="printActive" class="row">
+          <div ng-show="mainCtrl.printPanelActive" class="row">
             <div class="col-sm-12">
               <div class="tools-content-heading">
                 {{'Print' | translate}}
-                <a class="btn close" ng-click="printActive = false">&times;</a>
+                <a class="btn close" ng-click="mainCtrl.printPanelActive = false">&times;</a>
               </div>
               <gmf-print
                 gmf-print-map="mainCtrl.map"
-                gmf-print-active="printActive"
+                gmf-print-active="mainCtrl.printActive"
                 gmf-print-rotatemask="true">
               </gmf-print>
             </div>
@@ -223,7 +223,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = '188a07ace6cedb7dbc42945f05f01f5b2eae0fa3';
+        var cacheVersion = '7701961dd0bcb8f6d129bb133cfd933468706065';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
