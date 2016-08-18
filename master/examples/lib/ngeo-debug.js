@@ -109238,9 +109238,9 @@ goog.require('ngeo');
 /**
  * Directive used to export vector features in different types of format.
  * To configure which formats to use, define the `ngeoExportFeatureFormats`
- * constant, as such:
+ * value, as such:
  *
- *     app.module.constant('ngeoExportFeatureFormats', [
+ *     app.module.value('ngeoExportFeatureFormats', [
  *         ngeo.FeatureHelper.FormatType.KML,
  *         ngeo.FeatureHelper.FormatType.GPX
  *     ]);
@@ -130253,10 +130253,10 @@ ngeo.WfsPermalinkData;
 
 
 /**
- * Constant that is supposed to be set in applications to enable the WFS
+ * Value that is supposed to be set in applications to enable the WFS
  * permalink functionality.
  */
-ngeo.module.constant('ngeoWfsPermalinkOptions',
+ngeo.module.value('ngeoWfsPermalinkOptions',
     /** @type {ngeox.WfsPermalinkOptions} */ ({
       url: '', wfsTypes: [], defaultFeatureNS: '', defaultFeaturePrefix: ''
     }));
@@ -130325,6 +130325,8 @@ ngeo.WfsPermalink = function($http, ngeoQueryResult, ngeoWfsPermalinkOptions) {
    * @private
    */
   this.wfsTypes_ = {};
+
+  goog.asserts.assertArray(options.wfsTypes, 'wfsTypes is not correctly set');
   options.wfsTypes.forEach(function(wfsType) {
     this.wfsTypes_[wfsType.featureType] = wfsType;
   }.bind(this));
@@ -130381,7 +130383,7 @@ ngeo.WfsPermalink.prototype.clear = function() {
 ngeo.WfsPermalink.prototype.issue = function(queryData, map) {
   goog.asserts.assert(this.url_,
       'url is not set. to use the wfs permalink service, ' +
-      'set the constant `ngeoWfsPermalinkOptions`');
+      'set the value `ngeoWfsPermalinkOptions`');
   this.clearResult_();
 
   var typeName = queryData.wfsType;
