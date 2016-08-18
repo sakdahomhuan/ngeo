@@ -94548,7 +94548,7 @@ goog.provide('ngeo');
 
 
 /** @type {!angular.Module} */
-ngeo.module = angular.module('ngeo', ['gettext', 'ui.date']);
+ngeo.module = angular.module('ngeo', ['gettext', 'ui.date', 'floatThead']);
 
 
 /**
@@ -95294,6 +95294,7 @@ goog.require('ngeo');
 goog.require('ngeo.LayerHelper');
 goog.require('ol.format.WFS');
 goog.require('ol.format.WMSGetFeatureInfo');
+goog.require('ol.object');
 goog.require('ol.source.ImageWMS');
 goog.require('ol.source.TileWMS');
 goog.require('goog.uri.utils');
@@ -95331,7 +95332,8 @@ ngeo.QueryableSources;
  */
 ngeo.module.value('ngeoQueryResult', /** @type {ngeox.QueryResult} */ ({
   sources: [],
-  total: 0
+  total: 0,
+  pending: false
 }));
 
 
@@ -95365,6 +95367,13 @@ ngeo.Query = function($http, $q, ngeoQueryResult, ngeoQueryOptions,
    * @private
    */
   this.limit_ = options.limit !== undefined ? options.limit : 50;
+
+  /**
+   * @type {boolean}
+   * @private
+   */
+  this.queryCountFirst_ = options.queryCountFirst !== undefined ?
+      options.queryCountFirst : false;
 
   /**
    * @type {string}
@@ -95629,6 +95638,7 @@ ngeo.Query.prototype.issueIdentifyFeaturesRequests_ = function(map, coordinate) 
 
   this.doGetFeatureInfoRequests_(sources.wms, coordinate, map);
   this.doGetFeatureRequestsWithCoordinate_(sources.wfs, coordinate, map);
+  this.updatePendingState_();
 };
 
 
@@ -95643,6 +95653,7 @@ ngeo.Query.prototype.issueIdentifyFeaturesRequests_ = function(map, coordinate) 
 ngeo.Query.prototype.issueGetFeatureRequests_ = function(map, extent) {
   var sources = this.getQueryableSources_(map, true);
   this.doGetFeatureRequests_(sources.wfs, extent, map);
+  this.updatePendingState_();
 };
 
 
@@ -95807,13 +95818,14 @@ ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
     this.$http_.get(wmsGetFeatureInfoUrl, {timeout: canceler.promise})
         .then(function(items, response) {
           items.forEach(function(item) {
+            item['resultSource'].pending = false;
             var format = item.source.format;
             var features = format.readFeatures(response.data);
             this.setUniqueIds_(features, item.source.id);
-            item['resultSource'].pending = false;
             item['resultSource'].features = features;
             this.result_.total += features.length;
           }, this);
+          this.updatePendingState_();
         }.bind(this, items));
   }, this);
 };
@@ -95852,31 +95864,73 @@ ngeo.Query.prototype.doGetFeatureRequests_ = function(
     items.forEach(function(item) {
       var layers = this.getLayersForItem_(item);
 
-      var featureRequestXml = wfsFormat.writeGetFeature({
+      if (layers.length == 0 || layers[0] === '') {
+        // do not query source if no valid layers
+        item['resultSource'].pending = false;
+        item['resultSource'].queried = false;
+        return;
+      }
+
+      /** @type{olx.format.WFSWriteGetFeatureOptions} */
+      var getFeatureOptions = {
         srsName: projCode,
         featureNS: this.featureNS_,
         featurePrefix: this.featurePrefix_,
         featureTypes: layers,
         outputFormat: 'GML3',
         bbox: bbox,
-        geometryName: this.geometryName_,
-        maxFeatures: this.limit_
+        geometryName: this.geometryName_
+      };
+
+      var sourceFormat = new ol.format.WFS({
+        featureType: layers,
+        featureNS: this.featureNS_
       });
 
-      var featureRequest = xmlSerializer.serializeToString(featureRequestXml);
-      var canceler = this.registerCanceler_();
-      this.$http_.post(url, featureRequest, {timeout: canceler.promise})
-          .then(function(response) {
-            var sourceFormat = new ol.format.WFS({
-              featureType: layers,
-              featureNS: this.featureNS_
-            });
-            var features = sourceFormat.readFeatures(response.data);
-            this.setUniqueIds_(features, item.source.id);
-            item['resultSource'].pending = false;
-            item['resultSource'].features = features;
-            this.result_.total += features.length;
-          }.bind(this));
+      var getFeatures = function() {
+        /** @type{olx.format.WFSWriteGetFeatureOptions} */
+        var options = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.object.assign({
+          maxFeatures: this.limit_
+        }, getFeatureOptions));
+        var featureRequestXml = wfsFormat.writeGetFeature(options);
+        var featureRequest = xmlSerializer.serializeToString(featureRequestXml);
+
+        var canceler = this.registerCanceler_();
+        this.$http_.post(url, featureRequest, {timeout: canceler.promise})
+            .then(function(response) {
+              item['resultSource'].pending = false;
+              var features = sourceFormat.readFeatures(response.data);
+              this.setUniqueIds_(features, item.source.id);
+              item['resultSource'].features = features;
+              this.result_.total += features.length;
+              this.updatePendingState_();
+            }.bind(this));
+      }.bind(this);
+
+      if (this.queryCountFirst_) {
+        var getCountOptions = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.object.assign({
+          resultType: 'hits'
+        }, getFeatureOptions));
+        var featureCountXml = wfsFormat.writeGetFeature(getCountOptions);
+        var featureCountRequest = xmlSerializer.serializeToString(featureCountXml);
+
+        var canceler = this.registerCanceler_();
+        this.$http_.post(url, featureCountRequest, {timeout: canceler.promise})
+            .then(function(response) {
+              var meta = sourceFormat.readFeatureCollectionMetadata(response.data);
+              if (meta['numberOfFeatures'] > this.limit_) {
+                item['resultSource'].pending = false;
+                item['resultSource'].features = [];
+                item['resultSource'].tooManyResults = true;
+                item['resultSource'].totalFeatureCount = meta['numberOfFeatures'];
+                this.updatePendingState_();
+              } else {
+                getFeatures();
+              }
+            }.bind(this));
+      } else {
+        getFeatures();
+      }
     }.bind(this));
   }.bind(this));
 };
@@ -95892,7 +95946,10 @@ ngeo.Query.prototype.clearResult_ = function() {
     source.features.length = 0;
     source.pending = false;
     source.queried = false;
+    source.tooManyResults = false;
+    source.totalFeatureCount = undefined;
   }, this);
+  this.result_.pending = false;
 };
 
 
@@ -95989,6 +96046,26 @@ ngeo.Query.prototype.cancelStillRunningRequests_ = function() {
     canceler.resolve();
   });
   this.requestCancelers_.length = 0;
+};
+
+
+ngeo.Query.prototype.updatePendingState_ = function() {
+  var pendingSources = 0;
+  this.result_.sources.forEach(function(source) {
+    if (source.pending) {
+      pendingSources++;
+    }
+  });
+  this.result_.pending = pendingSources > 0;
+};
+
+
+/**
+ * @returns {number} The maximum number of features that are requested.
+ * @public
+ */
+ngeo.Query.prototype.getLimit = function() {
+  return this.limit_;
 };
 
 
@@ -96711,6 +96788,32 @@ ngeo.DMSCoordinates = function() {
 };
 
 ngeo.module.filter('ngeoDMSCoordinates', ngeo.DMSCoordinates);
+
+
+/**
+ * A filter to mark a value as trusted HTML.
+ *
+ * Usage:
+ *
+ *    <p ng-bind-html="ctrl.someValue | ngeoTrustHtml"></p>
+ *
+ * @return {function(?):string} The filter function.
+ * @ngInject
+ * @ngdoc filter
+ * @param {angular.$sce} $sce Angular sce service.
+ * @ngname ngeoTrustHtml
+ */
+ngeo.trustHtmlFilter = function($sce) {
+  return function(input) {
+    if (input !== undefined && input !== null) {
+      return $sce.trustAsHtml('' + input);
+    } else {
+      return $sce.trustAsHtml('&nbsp;');
+    }
+  };
+};
+
+ngeo.module.filter('ngeoTrustHtml', ngeo.trustHtmlFilter);
 
 // Copyright 2010 The Closure Library Authors. All Rights Reserved.
 //
@@ -109512,6 +109615,412 @@ ngeo.filereaderDirective = function($window) {
 
 
 ngeo.module.directive('ngeoFilereader', ngeo.filereaderDirective);
+
+goog.provide('ngeo.GridConfig');
+goog.provide('ngeo.GridController');
+goog.provide('ngeo.gridDirective');
+
+goog.require('ngeo');
+goog.require('ol.has');
+goog.require('goog.asserts');
+/** @suppress {extraRequire} */
+goog.require('ngeo.filters');
+
+ngeo.module.value('ngeoGridTemplateUrl',
+    /**
+     * @param {angular.JQLite} element Element.
+     * @param {angular.Attributes} attrs Attributes.
+     * @return {boolean} Template URL.
+     */
+    function(element, attrs) {
+      var templateUrl = attrs['ngeoGridTemplateurl'];
+      return templateUrl !== undefined ? templateUrl :
+          ngeo.baseTemplateUrl + '/grid.html';
+    });
+
+/**
+ * @param {Array.<Object>|undefined} data Entries/objects to be shown in a grid.
+ * @param {Array.<ngeox.GridColumnDef>|undefined} columnDefs Column definition of a grid.
+ * @constructor
+ * @export
+ */
+ngeo.GridConfig = function(data, columnDefs) {
+  /**
+   * @type {Array.<Object>|undefined}
+   * @export
+   */
+  this.data = data;
+
+  /**
+   * @type {Array.<ngeox.GridColumnDef>|undefined}
+   * @export
+   */
+  this.columnDefs = columnDefs;
+
+  /**
+   * @type {!Object.<string, Object>}
+   * @export
+   */
+  this.selectedRows = {};
+};
+
+
+/**
+ * Get an ID for a row.
+ * @param {Object} attributes An entry/row.
+ * @return {string} Unique id for this object.
+ * @export
+ */
+ngeo.GridConfig.getRowUid = function(attributes) {
+  return '' + goog.getUid(attributes);
+};
+
+
+/**
+ * Is the given row selected?
+ * @param {Object} attributes An entry/row.
+ * @return {boolean} True if already selected. False otherwise.
+ * @export
+ */
+ngeo.GridConfig.prototype.isRowSelected = function(attributes) {
+  return !!this.selectedRows[ngeo.GridConfig.getRowUid(attributes)];
+};
+
+
+/**
+ * Returns the number of selected rows.
+ * @return {number} Number of selected rows.
+ * @export
+ */
+ngeo.GridConfig.prototype.getSelectedCount = function() {
+  return Object.keys(this.selectedRows).length;
+};
+
+
+/**
+ * Returns the selected rows.
+ * @return {Array.<Object>} Selected rows in the current ordering.
+ * @export
+ */
+ngeo.GridConfig.prototype.getSelectedRows = function() {
+  return this.data.filter(function(row) {
+    return this.isRowSelected(row);
+  }.bind(this));
+};
+
+
+/**
+ * @param {Object} attributes An entry/row.
+ * @public
+ */
+ngeo.GridConfig.prototype.selectRow = function(attributes) {
+  var uid = ngeo.GridConfig.getRowUid(attributes);
+  this.selectedRows[uid] = attributes;
+};
+
+
+/**
+ * @param {Object} attributes An entry/row.
+ * @public
+ */
+ngeo.GridConfig.prototype.toggleRow = function(attributes) {
+  var uid = ngeo.GridConfig.getRowUid(attributes);
+  var isSelected = this.isRowSelected(attributes);
+  if (isSelected) {
+    delete this.selectedRows[uid];
+  } else {
+    this.selectedRows[uid] = attributes;
+  }
+};
+
+
+/**
+ * Select all rows.
+ * @export
+ */
+ngeo.GridConfig.prototype.selectAll = function() {
+  this.data.forEach(function(attributes) {
+    this.selectRow(attributes);
+  }.bind(this));
+};
+
+
+/**
+ * Unselect all rows.
+ * @export
+ */
+ngeo.GridConfig.prototype.unselectAll = function() {
+  for (var rowId in this.selectedRows) {
+    delete this.selectedRows[rowId];
+  }
+};
+
+
+/**
+ * Invert selection.
+ * @export
+ */
+ngeo.GridConfig.prototype.invertSelection = function() {
+  this.data.forEach(function(attributes) {
+    this.toggleRow(attributes);
+  }.bind(this));
+};
+
+
+/**
+ * A grid directive for displaying tabular data. The columns of the grid
+ * are sortable, rows can be selected with a single click (also in combination
+ * with SHIFT and CTRL/Meta).
+ *
+ * Example:
+ *
+ *     <ngeo-grid
+ *       ngeo-grid-configuration="::ctrl.gridConfiguration"
+ *     </ngeo-grid>
+ *
+ * @htmlAttribute {ngeo.GridConfig} ngeo-grid-configuration The
+ * configuration to use.
+ * @param {string|function(!angular.JQLite=, !angular.Attributes=)}
+ *     ngeoGridTemplateUrl Template URL for the directive.
+ * @return {angular.Directive} The directive specs.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoGrid
+ */
+ngeo.gridDirective = function(ngeoGridTemplateUrl) {
+  return {
+    bindToController: true,
+    controller: 'ngeoGridController',
+    controllerAs: 'ctrl',
+    restrict: 'E',
+    scope: {
+      'configuration': '=ngeoGridConfiguration'
+    },
+    templateUrl: ngeoGridTemplateUrl
+  };
+};
+
+ngeo.module.directive('ngeoGrid', ngeo.gridDirective);
+
+
+/**
+ * @param {!angular.Scope} $scope Angular scope.
+ * @constructor
+ * @ngInject
+ * @ngdoc controller
+ * @ngname ngeoGridController
+ */
+ngeo.GridController = function($scope) {
+
+  /**
+   * @type {!angular.Scope}
+   * @private
+   */
+  this.scope_ = $scope;
+
+  /**
+   * @type {ngeo.GridConfig}
+   * @export
+   */
+  this.configuration;
+
+  /**
+   * @type {Object.<string, Object>}
+   * @export
+   */
+  this.selectedRows = this.configuration.selectedRows;
+
+  /**
+   * The name of the column used to sort the grid.
+   * @type {string}
+   * @export
+   */
+  this.sortedBy;
+
+  /**
+   * @type {boolean}
+   * @export
+   */
+  this.sortAscending = true;
+
+  /**
+   * Configuration object for float-thead.
+   * @type {Object}
+   * @export
+   */
+  this.floatTheadConfig = {
+    'scrollContainer': function($table) {
+      return $table.closest('.table-container');
+    }
+  };
+
+};
+
+
+/**
+ * Sort function that always puts undefined values to the bottom of the grid.
+ * A new call will sort ascending. A next one will sort descending (and so
+ * on).
+ * @param {string} columnName The name of the column that should be used to
+ *    sort the data.
+ * @export
+ */
+ngeo.GridController.prototype.sort = function(columnName) {
+  this.sortAscending = this.sortedBy === columnName ? !this.sortAscending : true;
+  this.sortedBy = columnName;
+
+  var asc = this.sortAscending ? 1 : -1;
+  this.configuration.data.sort(function(attributes1, attributes2) {
+    if (!attributes1[columnName]) {
+      return 1;
+    }
+    if (!attributes2[columnName]) {
+      return -1;
+    }
+    return attributes1[columnName] > attributes2[columnName] ? asc : -asc;
+  });
+};
+
+
+/**
+ * Handler for clicks on a row.
+ * @param {Object} attributes An entry/row.
+ * @param {jQuery.Event} event Event.
+ * @export
+ */
+ngeo.GridController.prototype.clickRow = function(attributes, event) {
+  var shiftKey = this.isShiftKeyOnly_(event);
+  var platformModifierKey = this.isPlatformModifierKeyOnly_(event);
+
+  this.clickRow_(attributes, shiftKey, platformModifierKey);
+};
+
+
+/**
+ * @param {Object} attributes An entry/row.
+ * @param {boolean} shiftKey Shift pressed?
+ * @param {boolean} platformModifierKey CTRL/Meta pressed?
+ * @private
+ */
+ngeo.GridController.prototype.clickRow_ = function(
+    attributes, shiftKey, platformModifierKey) {
+
+  if (shiftKey && !platformModifierKey) {
+    this.selectRange_(attributes);
+  } else if (!shiftKey && platformModifierKey) {
+    this.configuration.toggleRow(attributes);
+  } else {
+    var isSelected = this.configuration.isRowSelected(attributes);
+    this.configuration.unselectAll();
+    if (!isSelected) {
+      this.configuration.selectRow(attributes);
+    }
+  }
+};
+
+
+/**
+ * Selects all rows between the given row and the closest already selected row.
+ * @param {Object} attributes An entry/row.
+ * @private
+ */
+ngeo.GridController.prototype.selectRange_ = function(attributes) {
+  var targetUid = ngeo.GridConfig.getRowUid(attributes);
+  var data = this.configuration.data;
+
+  if (this.configuration.isRowSelected(attributes)) {
+    return;
+  }
+
+  // get the position of the clicked and all already selected rows
+  /** @type {number|undefined} */
+  var posClickedRow = undefined;
+  var posSelectedRows = [];
+  for (var i = 0; i < data.length; i++) {
+    var currentRow = data[i];
+    var currentUid = ngeo.GridConfig.getRowUid(currentRow);
+
+    if (targetUid === currentUid) {
+      posClickedRow = i;
+    } else if (this.configuration.isRowSelected(currentRow)) {
+      posSelectedRows.push(i);
+    }
+  }
+  goog.asserts.assert(posClickedRow !== undefined);
+
+  if (posSelectedRows.length == 0) {
+    // if no other row is selected, select the clicked one and stop
+    this.configuration.selectRow(attributes);
+  }
+
+  // find the selected row which is the closest to the clicked row
+  var distance = Infinity;
+  var posClosestRow = posSelectedRows[0];
+  for (var j = 0; j < posSelectedRows.length; j++) {
+    var currentPos = posSelectedRows[j];
+    var currentDistance = Math.abs(currentPos - posClickedRow);
+    if (distance > currentDistance) {
+      distance = currentDistance;
+      posClosestRow = currentPos;
+    }
+    // note: this could be optimized because `posSelectedRows` is ordered.
+  }
+
+  // then select all rows between the clicked one and the closest
+  var rangeStart = (posClickedRow < posClosestRow) ? posClickedRow : posClosestRow;
+  var rangeEnd = (posClickedRow > posClosestRow) ? posClickedRow : posClosestRow;
+
+  for (var l = rangeStart; l <= rangeEnd; l++) {
+    this.configuration.selectRow(data[l]);
+  }
+};
+
+
+/**
+ * Prevent the default browser behaviour of selecting text
+ * when selecting multiple rows with SHIFT or CTRL/Meta.
+ * @param {jQuery.Event} event Event.
+ * @export
+ */
+ngeo.GridController.prototype.preventTextSelection = function(event) {
+  var shiftKey = this.isShiftKeyOnly_(event);
+  var platformModifierKey = this.isPlatformModifierKeyOnly_(event);
+
+  if (shiftKey || platformModifierKey) {
+    event.preventDefault();
+  }
+};
+
+
+/**
+ * Same as `ol.events.condition.platformModifierKeyOnly`.
+ * @param {jQuery.Event} event Event.
+ * @return {boolean} True if only the platform modifier key is pressed.
+ * @private
+ */
+ngeo.GridController.prototype.isPlatformModifierKeyOnly_ = function(event) {
+  return (
+      !event.altKey &&
+      (ol.has.MAC ? event.metaKey : event.ctrlKey) &&
+      !event.shiftKey);
+};
+
+
+/**
+ * Same as `ol.events.condition.shiftKeyOnly`.
+ * @param {jQuery.Event} event Event.
+ * @return {boolean} True if only the shift key is pressed.
+ * @private
+ */
+ngeo.GridController.prototype.isShiftKeyOnly_ = function(event) {
+  return (
+      !event.altKey &&
+      !(event.metaKey || event.ctrlKey) &&
+      event.shiftKey);
+};
+
+
+ngeo.module.controller('ngeoGridController', ngeo.GridController);
 
 goog.provide('ngeo.DecorateLayer');
 
@@ -126677,6 +127186,120 @@ ngeo.createGeoJSONBloodhound = function(url, opt_filter, opt_featureProjection,
 
 ngeo.module.value('ngeoCreateGeoJSONBloodhound', ngeo.createGeoJSONBloodhound);
 
+goog.provide('ngeo.CsvDownload');
+
+goog.require('ngeo');
+
+
+/**
+ * Service to generate and download a CSV file from tabular data.
+ * Column headers are translated using {@link angularGettext.Catalog}.
+ *
+ * @param {angularGettext.Catalog} gettextCatalog Gettext service.
+ * @constructor
+ * @ngdoc service
+ * @ngname ngeoCsvDownload
+ * @ngInject
+ */
+ngeo.CsvDownload = function(gettextCatalog) {
+
+  /**
+   * @type {angularGettext.Catalog}
+   * @private
+   */
+  this.gettextCatalog_ = gettextCatalog;
+
+  /**
+   * Separator character.
+   * @type {string}
+   * @private
+   */
+  this.separator_ = ',';
+
+  /**
+   * Quote character.
+   * @type {string}
+   * @private
+   */
+  this.quote_ = '"';
+};
+
+
+/**
+ * Generate a CSV.
+ *
+ * @param {Array.<Object>} data Entries/objects to include in the CSV.
+ * @param {Array.<ngeox.GridColumnDef>} columnDefs Column definitions.
+ * @return {string} The CSV file as string.
+ * @export
+ */
+ngeo.CsvDownload.prototype.generateCsv = function(data, columnDefs) {
+  if (data.length == 0 || columnDefs.length == 0) {
+    return '';
+  }
+
+  var translatedColumnHeaders = columnDefs.map(function(columnHeader) {
+    return this.gettextCatalog_.getString(columnHeader.name);
+  }.bind(this));
+
+  var header = this.getRow_(translatedColumnHeaders);
+  var dataRows = data.map(function(values) {
+    var rowValues = columnDefs.map(function(columnHeader) {
+      return values[columnHeader.name];
+    });
+    return this.getRow_(rowValues);
+  }.bind(this));
+
+  return header + dataRows.join('');
+};
+
+
+/**
+ * @param {Array.<?>} values Values.
+ * @return {string} CSV row.
+ * @private
+ */
+ngeo.CsvDownload.prototype.getRow_ = function(values) {
+  var matchAllQuotesRegex = new RegExp(this.quote_, 'g');
+  var doubleQuote = this.quote_ + this.quote_;
+
+  var rowValues = values.map(function(value) {
+    if (value !== undefined && value !== null) {
+      value = '' + value;
+      // wrap each value into quotes and escape quotes with double quotes
+      return this.quote_ + value.replace(matchAllQuotesRegex, doubleQuote) + this.quote_;
+    } else {
+      return '';
+    }
+  }.bind(this));
+
+  return rowValues.join(this.separator_) + '\n';
+};
+
+
+/**
+ * Generate a CSV and start a download with the generated file.
+ *
+ * @param {Array.<Object>} data Entries/objects to include in the CSV.
+ * @param {Array.<ngeox.GridColumnDef>} columnDefs Column definitions.
+ * @param {string} fileName The CSV file name.
+ * @export
+ */
+ngeo.CsvDownload.prototype.startDownload = function(data, columnDefs, fileName) {
+  var fileContent = this.generateCsv(data, columnDefs);
+
+  var hiddenElement = document.createElement('a');
+  // FF requires the link to be in the body
+  document.body.appendChild(hiddenElement);
+  hiddenElement.href = 'data:attachment/csv,' + encodeURI(fileContent);
+  hiddenElement.target = '_blank';
+  hiddenElement.download = fileName;
+  hiddenElement.click();
+  document.body.removeChild(hiddenElement);
+};
+
+ngeo.module.service('ngeoCsvDownload', ngeo.CsvDownload);
+
 goog.provide('ngeo.CreatePopup');
 goog.provide('ngeo.Popup');
 
@@ -130571,6 +131194,7 @@ goog.require('ngeo');
   var runner = function($templateCache) {
     $templateCache.put('ngeo/attributes.html', '<fieldset ng-disabled=attrCtrl.disabled> <div class=form-group ng-repeat="attribute in ::attrCtrl.attributes"> <div ng-if="attribute.type !== \'geometry\'"> <label>{{::attribute.required ? "* " : ""}}{{ ::attribute.name }}:</label> <div ng-switch=attribute.type> <select name={{::attribute.name}} ng-required=attribute.required ng-switch-when=select ng-model=attrCtrl.properties[attribute.name] ng-change=attrCtrl.handleInputChange(attribute.name); class=form-control type=text> <option ng-repeat="attribute in ::attribute.choices" value="{{ ::attribute }}"> {{ ::attribute }} </option> </select> <input name={{::attribute.name}} ng-required=attribute.required ng-switch-when=date ui-date=attrCtrl.dateOptions ng-model=attrCtrl.properties[attribute.name] ng-change=attrCtrl.handleInputChange(attribute.name); class=form-control type=text> <input name={{::attribute.name}} ng-required=attribute.required ng-switch-when=datetime ui-date=attrCtrl.dateOptions ng-model=attrCtrl.properties[attribute.name] ng-change=attrCtrl.handleInputChange(attribute.name); class=form-control type=text> <input name={{::attribute.name}} ng-required=attribute.required ng-switch-default ng-model=attrCtrl.properties[attribute.name] ng-change=attrCtrl.handleInputChange(attribute.name); class=form-control type=text> <div ng-show="form.$submitted || form[attribute.name].$touched"> <p class=text-danger ng-show=form[attribute.name].$error.required> {{\'This field is required\' | translate}} </p> </div> </div> </div> </div> </fieldset> ');
     $templateCache.put('ngeo/popup.html', '<h4 class="popover-title ngeo-popup-title"> <span ng-bind-html=title></span> <button type=button class=close ng-click="open = false"> &times;</button> </h4> <div class=popover-content ng-bind-html=content></div> ');
+    $templateCache.put('ngeo/grid.html', '<div class=table-container> <table float-thead=ctrl.floatTheadConfig ng-model=ctrl.configuration.data class="table table-bordered table-striped table-hover"> <thead class=table-header> <tr> <th ng-repeat="columnDefs in ctrl.configuration.columnDefs" ng-click=ctrl.sort(columnDefs.name)>{{columnDefs.name | translate}} <i ng-show="ctrl.sortedBy !== columnDefs.name" class="fa fa-fw"></i> <i ng-show="ctrl.sortedBy === columnDefs.name && ctrl.sortAscending === true" class="fa fa-caret-up"></i> <i ng-show="ctrl.sortedBy === columnDefs.name && ctrl.sortAscending === false" class="fa fa-caret-down"></i> </th> </tr> </thead> <tbody> <tr ng-repeat="attributes in ctrl.configuration.data" ng-class="[\'row-\' + ctrl.configuration.getRowUid(attributes), ctrl.configuration.isRowSelected(attributes) ? \'active\': \'\']" ng-click="ctrl.clickRow(attributes, $event)" ng-mousedown=ctrl.preventTextSelection($event)> <td ng-repeat="columnDefs in ctrl.configuration.columnDefs" ng-bind-html="attributes[columnDefs.name] | ngeoTrustHtml"></td> </tr> </tbody> </table> </div> ');
     $templateCache.put('ngeo/scaleselector.html', '<div class="btn-group btn-block" ng-class="::{\'dropup\': scaleselectorCtrl.options.dropup}"> <button type=button class="btn btn-default dropdown-toggle" data-toggle=dropdown aria-expanded=false> <span ng-bind-html=scaleselectorCtrl.currentScale|ngeoScalify></span>&nbsp;<i class=caret></i> </button> <ul class="dropdown-menu btn-block" role=menu> <li ng-repeat="zoomLevel in ::scaleselectorCtrl.zoomLevels"> <a href ng-click=scaleselectorCtrl.changeZoom(zoomLevel) ng-bind-html=::scaleselectorCtrl.getScale(zoomLevel)|ngeoScalify> </a> </li> </ul> </div> ');
     $templateCache.put('ngeo/datepicker.html', '<div class=ngeo-datepicker> <form name=dateForm class=datepicker-form novalidate> <div ng-if="::datepickerCtrl.time.widget === \'datepicker\'"> <div class=start-date> <span ng-if="::datepickerCtrl.time.mode === \'range\'" translate>From:</span> <span ng-if="::datepickerCtrl.time.mode !== \'range\'" translate>Date:</span> <input name=sdate ui-date=datepickerCtrl.sdateOptions ng-model=datepickerCtrl.sdate required> </div> <div class=end-date ng-if="::datepickerCtrl.time.mode === \'range\'"> <span translate>To:</span> <input name=edate ui-date=datepickerCtrl.edateOptions ng-model=datepickerCtrl.edate required> </div> </div> </form> </div> ');
     $templateCache.put('ngeo/layertree.html', '<span ng-if=::!layertreeCtrl.isRoot>{{::layertreeCtrl.node.name}}</span> <input type=checkbox ng-if="::layertreeCtrl.node && !layertreeCtrl.node.children" ng-model=layertreeCtrl.getSetActive ng-model-options="{getterSetter: true}"> <ul ng-if=::layertreeCtrl.node.children> <li ng-repeat="node in ::layertreeCtrl.node.children" ngeo-layertree=::node ngeo-layertree-notroot ngeo-layertree-map=layertreeCtrl.map ngeo-layertree-nodelayerexpr=layertreeCtrl.nodelayerExpr ngeo-layertree-listenersexpr=layertreeCtrl.listenersExpr> </li> </ul> ');
