@@ -105166,7 +105166,7 @@ ngeo.MeasureEventType = {
  */
 ngeo.MeasureEvent = function(type, feature) {
 
-  goog.base(this, type);
+  ol.events.Event.call(this, type);
 
   /**
    * The feature being drawn.
@@ -105176,7 +105176,7 @@ ngeo.MeasureEvent = function(type, feature) {
   this.feature = feature;
 
 };
-goog.inherits(ngeo.MeasureEvent, ol.events.Event);
+ol.inherits(ngeo.MeasureEvent, ol.events.Event);
 
 
 /**
@@ -105190,7 +105190,7 @@ ngeo.interaction.Measure = function(opt_options) {
 
   var options = opt_options !== undefined ? opt_options : {};
 
-  goog.base(this, {
+  ol.interaction.Interaction.call(this, {
     handleEvent: ngeo.interaction.Measure.handleEvent_
   });
 
@@ -105325,7 +105325,7 @@ ngeo.interaction.Measure = function(opt_options) {
       ol.Object.getChangeEventType(ol.interaction.InteractionProperty.ACTIVE),
       this.updateState_, this);
 };
-goog.inherits(ngeo.interaction.Measure, ol.interaction.Interaction);
+ol.inherits(ngeo.interaction.Measure, ol.interaction.Interaction);
 
 /**
  * Calculate the area of the passed polygon and return a formatted string
@@ -105457,7 +105457,8 @@ ngeo.interaction.Measure.prototype.createDrawInteraction = goog.abstractMethod;
  * @inheritDoc
  */
 ngeo.interaction.Measure.prototype.setMap = function(map) {
-  goog.base(this, 'setMap', map);
+
+  ol.interaction.Interaction.prototype.setMap.call(this, map);
 
   this.vectorLayer_.setMap(map);
 
@@ -105665,7 +105666,7 @@ ngeo.interaction.MeasureArea = function(format, opt_options) {
 
   var options = opt_options !== undefined ? opt_options : {};
 
-  goog.base(this, options);
+  ngeo.interaction.Measure.call(this, options);
 
 
   /**
@@ -105685,7 +105686,7 @@ ngeo.interaction.MeasureArea = function(format, opt_options) {
   this.format = format;
 
 };
-goog.inherits(ngeo.interaction.MeasureArea, ngeo.interaction.Measure);
+ol.inherits(ngeo.interaction.MeasureArea, ngeo.interaction.Measure);
 
 
 /**
@@ -105744,7 +105745,7 @@ ngeo.interaction.MeasureLength = function(format, opt_options) {
 
   var options = opt_options !== undefined ? opt_options : {};
 
-  goog.base(this, options);
+  ngeo.interaction.Measure.call(this, options);
 
 
   /**
@@ -105764,7 +105765,7 @@ ngeo.interaction.MeasureLength = function(format, opt_options) {
   this.format = format;
 
 };
-goog.inherits(ngeo.interaction.MeasureLength, ngeo.interaction.Measure);
+ol.inherits(ngeo.interaction.MeasureLength, ngeo.interaction.Measure);
 
 
 /**
@@ -107310,7 +107311,7 @@ ngeo.interaction.MeasureAzimut = function(format, opt_options) {
 
   var options = opt_options !== undefined ? opt_options : {};
 
-  goog.base(this, options);
+  ngeo.interaction.Measure.call(this, options);
 
 
   /**
@@ -107327,7 +107328,7 @@ ngeo.interaction.MeasureAzimut = function(format, opt_options) {
   this.format = format;
 
 };
-goog.inherits(ngeo.interaction.MeasureAzimut, ngeo.interaction.Measure);
+ol.inherits(ngeo.interaction.MeasureAzimut, ngeo.interaction.Measure);
 
 
 /**
@@ -107414,7 +107415,7 @@ ngeo.interaction.MeasureAzimut.getAzimut = function(line) {
  */
 ngeo.interaction.DrawAzimut = function(options) {
 
-  goog.base(this, {
+  ol.interaction.Pointer.call(this, {
     handleDownEvent: ngeo.interaction.DrawAzimut.handleDownEvent_,
     handleEvent: ngeo.interaction.DrawAzimut.handleEvent_,
     handleUpEvent: ngeo.interaction.DrawAzimut.handleUpEvent_
@@ -107484,7 +107485,7 @@ ngeo.interaction.DrawAzimut = function(options) {
       ol.Object.getChangeEventType(ol.interaction.InteractionProperty.ACTIVE),
       this.updateState_, this);
 };
-goog.inherits(ngeo.interaction.DrawAzimut, ol.interaction.Pointer);
+ol.inherits(ngeo.interaction.DrawAzimut, ol.interaction.Pointer);
 
 
 /**
@@ -107698,7 +107699,7 @@ ngeo.interaction.DrawAzimut.prototype.finishDrawing_ = function() {
  * @inheritDoc
  */
 ngeo.interaction.DrawAzimut.prototype.setMap = function(map) {
-  goog.base(this, 'setMap', map);
+  ol.interaction.Pointer.prototype.setMap.call(this, map);
   this.updateState_();
 };
 
@@ -122176,7 +122177,8 @@ ngeo.format.FeatureHashLegacyProperties_ = {};
  * @export
  */
 ngeo.format.FeatureHash = function(opt_options) {
-  goog.base(this);
+
+  ol.format.TextFeature.call(this);
 
   var options = opt_options !== undefined ? opt_options : {};
 
@@ -122226,7 +122228,7 @@ ngeo.format.FeatureHash = function(opt_options) {
   ngeo.format.FeatureHashLegacyProperties_ = (options.propertiesType !== undefined) &&  options.propertiesType;
 
 };
-goog.inherits(ngeo.format.FeatureHash, ol.format.TextFeature);
+ol.inherits(ngeo.format.FeatureHash, ol.format.TextFeature);
 
 
 /**
@@ -123324,9 +123326,9 @@ goog.require('ol.format.XML');
  * @export
  */
 ngeo.format.XSDAttribute = function() {
-  goog.base(this);
+  ol.format.XML.call(this);
 };
-goog.inherits(ngeo.format.XSDAttribute, ol.format.XML);
+ol.inherits(ngeo.format.XSDAttribute, ol.format.XML);
 
 
 /**
@@ -123335,7 +123337,7 @@ goog.inherits(ngeo.format.XSDAttribute, ol.format.XML);
  */
 ngeo.format.XSDAttribute.prototype.read = function(source) {
   return /** @type {Array.<ngeox.Attribute>} */ (
-    goog.base(this, 'read', source)
+    ol.format.XML.prototype.read.call(this, source)
   );
 };
 
@@ -123530,7 +123532,7 @@ ngeo.interaction.MobileDrawProperty = {
  */
 ngeo.interaction.MobileDraw = function(options) {
 
-  goog.base(this, {
+  ol.interaction.Interaction.call(this, {
     handleEvent: goog.functions.TRUE
   });
 
@@ -123605,7 +123607,7 @@ ngeo.interaction.MobileDraw = function(options) {
   this.set(ngeo.interaction.MobileDrawProperty.VALID, false);
 
 };
-goog.inherits(ngeo.interaction.MobileDraw, ol.interaction.Interaction);
+ol.inherits(ngeo.interaction.MobileDraw, ol.interaction.Interaction);
 
 
 /**
@@ -123620,7 +123622,7 @@ ngeo.interaction.MobileDraw.prototype.setMap = function(map) {
     }
   }
 
-  goog.base(this, 'setMap', map);
+  ol.interaction.Interaction.prototype.setMap.call(this, map);
 
   if (map) {
     this.changeEventKey_ = ol.events.listen(map.getView(),
@@ -123988,11 +123990,11 @@ ngeo.interaction.MeasureLengthMobile = function(format, opt_options) {
 
   goog.object.extend(options, {displayHelpTooltip: false});
 
-  goog.base(this, format, options);
+  ngeo.interaction.MeasureLength.call(this, format, options);
 
 };
-goog.inherits(ngeo.interaction.MeasureLengthMobile,
-              ngeo.interaction.MeasureLength);
+ol.inherits(
+  ngeo.interaction.MeasureLengthMobile, ngeo.interaction.MeasureLength);
 
 
 /**
@@ -124029,10 +124031,10 @@ ngeo.interaction.MeasurePointMobile = function(opt_options) {
 
   goog.object.extend(options, {displayHelpTooltip: false});
 
-  goog.base(this, options);
+  ngeo.interaction.Measure.call(this, options);
 
 };
-goog.inherits(ngeo.interaction.MeasurePointMobile, ngeo.interaction.Measure);
+ol.inherits(ngeo.interaction.MeasurePointMobile, ngeo.interaction.Measure);
 
 
 /**
@@ -124100,7 +124102,7 @@ goog.require('ol.structs.RBush');
  */
 ngeo.interaction.ModifyCircle = function(options) {
 
-  goog.base(this, {
+  ol.interaction.Pointer.call(this, {
     handleDownEvent: ngeo.interaction.ModifyCircle.handleDownEvent_,
     handleDragEvent: ngeo.interaction.ModifyCircle.handleDragEvent_,
     handleEvent: ngeo.interaction.ModifyCircle.handleEvent,
@@ -124189,7 +124191,7 @@ ngeo.interaction.ModifyCircle = function(options) {
       this.handleFeatureRemove_, this);
 
 };
-goog.inherits(ngeo.interaction.ModifyCircle, ol.interaction.Pointer);
+ol.inherits(ngeo.interaction.ModifyCircle, ol.interaction.Pointer);
 
 
 /**
@@ -124265,7 +124267,7 @@ ngeo.interaction.ModifyCircle.prototype.removeFeatureSegmentData_ = function(fea
  */
 ngeo.interaction.ModifyCircle.prototype.setMap = function(map) {
   this.overlay_.setMap(map);
-  goog.base(this, 'setMap', map);
+  ol.interaction.Pointer.prototype.setMap.call(this, map);
 };
 
 
@@ -124591,7 +124593,7 @@ goog.require('ol.source.Vector');
  */
 ngeo.interaction.ModifyRectangle = function(options) {
 
-  goog.base(this, {
+  ol.interaction.Pointer.call(this, {
     handleDownEvent: this.handleDown_,
     handleMoveEvent: this.handleMove_,
     handleDragEvent: this.handleDrag_,
@@ -124668,7 +124670,7 @@ ngeo.interaction.ModifyRectangle = function(options) {
   this.features_.forEach(this.addFeature_, this);
 
 };
-goog.inherits(ngeo.interaction.ModifyRectangle, ol.interaction.Pointer);
+ol.inherits(ngeo.interaction.ModifyRectangle, ol.interaction.Pointer);
 
 
 /**
@@ -124784,7 +124786,7 @@ ngeo.interaction.ModifyRectangle.prototype.removeFeature_ = function(feature) {
 ngeo.interaction.ModifyRectangle.prototype.setMap = function(map) {
   this.vectorPoints_.setMap(map);
   this.vectorPoints_.setVisible(false);
-  goog.base(this, 'setMap', map);
+  ol.interaction.Pointer.prototype.setMap.call(this, map);
 };
 
 
@@ -125066,12 +125068,12 @@ ngeo.interaction.Modify = function(options) {
   }));
 
 
-  goog.base(this, {
+  ol.interaction.Interaction.call(this, {
     handleEvent: goog.functions.TRUE
   });
 
 };
-goog.inherits(ngeo.interaction.Modify, ol.interaction.Interaction);
+ol.inherits(ngeo.interaction.Modify, ol.interaction.Interaction);
 
 
 /**
@@ -125080,7 +125082,7 @@ goog.inherits(ngeo.interaction.Modify, ol.interaction.Interaction);
  * @export
  */
 ngeo.interaction.Modify.prototype.setActive = function(active) {
-  goog.base(this, 'setActive', active);
+  ol.interaction.Interaction.prototype.setActive.call(this, active);
   this.setState_();
 };
 
@@ -125102,7 +125104,7 @@ ngeo.interaction.Modify.prototype.setMap = function(map) {
     }, this);
   }
 
-  goog.base(this, 'setMap', map);
+  ol.interaction.Interaction.prototype.setMap.call(this, map);
 
   if (map) {
     interactions.forEach(function(interaction) {
@@ -125250,7 +125252,7 @@ ngeo.RotateEventType = {
  */
 ngeo.RotateEvent = function(type, feature) {
 
-  goog.base(this, type);
+  ol.events.Event.call(this, type);
 
   /**
    * The feature being rotated.
@@ -125260,7 +125262,7 @@ ngeo.RotateEvent = function(type, feature) {
   this.feature = feature;
 
 };
-goog.inherits(ngeo.RotateEvent, ol.events.Event);
+ol.inherits(ngeo.RotateEvent, ol.events.Event);
 
 
 /**
@@ -125357,14 +125359,14 @@ ngeo.interaction.Rotate = function(options) {
    */
   this.centerFeatures_ = {};
 
-  goog.base(this, {
+  ol.interaction.Pointer.call(this, {
     handleDownEvent: this.handleDown_,
     handleDragEvent: this.handleDrag_,
     handleUpEvent: this.handleUp_
   });
 
 };
-goog.inherits(ngeo.interaction.Rotate, ol.interaction.Pointer);
+ol.inherits(ngeo.interaction.Rotate, ol.interaction.Pointer);
 
 
 /**
@@ -125379,7 +125381,7 @@ ngeo.interaction.Rotate.prototype.setActive = function(active) {
     this.keyPressListenerKey_ = null;
   }
 
-  goog.base(this, 'setActive', active);
+  ol.interaction.Pointer.prototype.setActive.call(this, active);
 
   if (active) {
     this.keyPressListenerKey_ = goog.events.listen(
@@ -125461,7 +125463,7 @@ ngeo.interaction.Rotate.prototype.removeFeature_ = function(feature) {
  */
 ngeo.interaction.Rotate.prototype.setMap = function(map) {
   this.overlay_.setMap(map);
-  goog.base(this, 'setMap', map);
+  ol.interaction.Pointer.prototype.setMap.call(this, map);
 };
 
 
@@ -126110,9 +126112,10 @@ ngeo.interaction.Translate = function(options) {
    */
   this.centerFeatures_ = {};
 
-  goog.base(this, /** @type {olx.interaction.TranslateOptions} */ (options));
+  ol.interaction.Translate.call(
+    this, /** @type {olx.interaction.TranslateOptions} */ (options));
 };
-goog.inherits(ngeo.interaction.Translate, ol.interaction.Translate);
+ol.inherits(ngeo.interaction.Translate, ol.interaction.Translate);
 
 
 /**
@@ -126127,7 +126130,7 @@ ngeo.interaction.Translate.prototype.setActive = function(active) {
     this.keyPressListenerKey_ = null;
   }
 
-  goog.base(this, 'setActive', active);
+  ol.interaction.Translate.prototype.setActive.call(this, active);
 
   if (active) {
     this.keyPressListenerKey_ = goog.events.listen(
@@ -126156,7 +126159,7 @@ ngeo.interaction.Translate.prototype.setMap = function(map) {
     this.vectorLayer_.setMap(null);
   }
 
-  goog.base(this, 'setMap', map);
+  ol.interaction.Translate.prototype.setMap.call(this, map);
 
   if (map) {
     this.vectorLayer_.setMap(map);
@@ -126346,7 +126349,7 @@ ngeo.MenuEventType = {
  */
 ngeo.MenuEvent = function(type, action) {
 
-  goog.base(this, type);
+  ol.events.Event.call(this, type);
 
   /**
    * The action name that was clicked.
@@ -126356,7 +126359,7 @@ ngeo.MenuEvent = function(type, action) {
   this.action = action;
 
 };
-goog.inherits(ngeo.MenuEvent, ol.events.Event);
+ol.inherits(ngeo.MenuEvent, ol.events.Event);
 
 
 /**
@@ -126446,10 +126449,10 @@ ngeo.Menu = function(menuOptions, opt_overlayOptions) {
 
   options.element = contentEl[0];
 
-  goog.base(this, options);
+  ol.Overlay.call(this, options);
 
 };
-goog.inherits(ngeo.Menu, ol.Overlay);
+ol.inherits(ngeo.Menu, ol.Overlay);
 
 
 /**
@@ -126473,7 +126476,7 @@ ngeo.Menu.prototype.setMap = function(map) {
     olKeys.length = 0;
   }
 
-  goog.base(this, 'setMap', map);
+  ol.Overlay.prototype.setMap.call(this, map);
 
   if (map) {
     this.actions_.forEach(function(action) {
@@ -126642,10 +126645,10 @@ ngeo.Popover = function(opt_options) {
 
   options.element = $('<div />')[0];
 
-  goog.base(this, options);
+  ol.Overlay.call(this, options);
 
 };
-goog.inherits(ngeo.Popover, ol.Overlay);
+ol.inherits(ngeo.Popover, ol.Overlay);
 
 
 /**
@@ -126665,7 +126668,7 @@ ngeo.Popover.prototype.setMap = function(map) {
     $(element).popover('destroy');
   }
 
-  goog.base(this, 'setMap', map);
+  ol.Overlay.prototype.setMap.call(this, map);
 
   if (map) {
     var contentEl = this.contentEl_;
