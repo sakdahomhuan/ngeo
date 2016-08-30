@@ -106857,7 +106857,7 @@ goog.require('ngeo.Message');
  */
 ngeo.Notification = function($timeout) {
 
-  goog.base(this);
+  ngeo.Message.call(this);
 
   /**
    * @type {angular.$timeout}
@@ -106881,7 +106881,7 @@ ngeo.Notification = function($timeout) {
   this.cache_ = {};
 
 };
-goog.inherits(ngeo.Notification, ngeo.Message);
+ol.inherits(ngeo.Notification, ngeo.Message);
 
 
 /**
@@ -126939,7 +126939,7 @@ ngeo.BackgroundEventType = {
  */
 ngeo.BackgroundEvent = function(type, previous) {
 
-  goog.base(this, type);
+  ol.events.Event.call(this, type);
 
   /**
    * The layer used as background before a change.
@@ -126947,7 +126947,7 @@ ngeo.BackgroundEvent = function(type, previous) {
    */
   this.previous = previous;
 };
-goog.inherits(ngeo.BackgroundEvent, ol.events.Event);
+ol.inherits(ngeo.BackgroundEvent, ol.events.Event);
 
 
 /**
@@ -126995,8 +126995,7 @@ goog.inherits(ngeo.BackgroundEvent, ol.events.Event);
  */
 ngeo.BackgroundLayerMgr = function() {
 
-  goog.base(this);
-
+  ol.Observable.call(this);
 
   /**
    * Object used to track if maps have background layers.
@@ -127005,7 +127004,7 @@ ngeo.BackgroundLayerMgr = function() {
    */
   this.mapUids_ = {};
 };
-goog.inherits(ngeo.BackgroundLayerMgr, ol.Observable);
+ol.inherits(ngeo.BackgroundLayerMgr, ol.Observable);
 
 
 /**
@@ -127660,7 +127659,7 @@ ngeo.Disclaimer = function($sce, gettextCatalog, ngeoCreatePopup) {
    */
   this.createPopup_ = ngeoCreatePopup;
 
-  goog.base(this);
+  ngeo.Message.call(this);
 
   var container = angular.element('<div class="ngeo-disclaimer"></div>');
   angular.element(document.body).append(container);
@@ -127679,7 +127678,7 @@ ngeo.Disclaimer = function($sce, gettextCatalog, ngeoCreatePopup) {
   this.messages_ = {};
 
 };
-goog.inherits(ngeo.Disclaimer, ngeo.Message);
+ol.inherits(ngeo.Disclaimer, ngeo.Message);
 
 
 /**
