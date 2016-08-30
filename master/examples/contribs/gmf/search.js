@@ -63,6 +63,11 @@ app.MainController = function(gmfThemes, ngeoFeatureOverlayMgr) {
     minLength: 2
   };
 
+  /**
+   * @type {string}
+   * @export
+   */
+  this.inputValue;
 
   /**
    * @type {ol.Map}
