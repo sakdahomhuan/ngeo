@@ -8,7 +8,7 @@ var app = {};
 /** @type {!angular.Module} **/
 app.module = angular.module('app', ['gmf']);
 
-app.module.constant('gmfTreeUrl',
+app.module.value('gmfTreeUrl',
     'https://geomapfish-demo.camptocamp.net/2.1/wsgi/themes?version=2&background=background');
 
 
@@ -63,6 +63,11 @@ app.MainController = function(gmfThemes, ngeoFeatureOverlayMgr) {
     minLength: 2
   };
 
+  /**
+   * @type {string}
+   * @export
+   */
+  this.inputValue;
 
   /**
    * @type {ol.Map}
