@@ -84063,18 +84063,19 @@ ngeo.LayerHelper.REFRESH_PARAM = 'random';
 
 
 /**
- * Create and return a basic WMS layer with only a source URL and a dot
+ * Create and return a basic WMS layer with only a source URL and a comma
  * separated layers names (see {@link ol.source.ImageWMS}).
  * @param {string} sourceURL The source URL.
- * @param {string} sourceLayersName A dot separated names string.
+ * @param {string} sourceLayersName A comma separated names string.
  * @param {string=} opt_serverType Type of the server ("mapserver",
  *     "geoserver", "qgisserver", …).
  * @param {string=} opt_time time parameter for layer queryable by time/periode
+ * @param {Object.<string, string>=} opt_params WMS parameters.
  * @return {ol.layer.Image} WMS Layer.
  * @export
  */
 ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
-    sourceLayersName, opt_serverType, opt_time) {
+    sourceLayersName, opt_serverType, opt_time, opt_params) {
   var params = {'LAYERS': sourceLayersName};
   var olServerType;
   if (opt_time) {
@@ -84085,14 +84086,16 @@ ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
     // OpenLayers expects 'qgis' insteads of 'qgisserver'
     olServerType = opt_serverType.replace('qgisserver', 'qgis');
   }
-  var layer = new ol.layer.Image({
-    source: new ol.source.ImageWMS({
-      url: sourceURL,
-      params: params,
-      serverType: olServerType
-    })
+  var source = new ol.source.ImageWMS({
+    url: sourceURL,
+    params: params,
+    serverType: olServerType
   });
-  return layer;
+  if (opt_params) {
+    source.updateParams(opt_params);
+  }
+
+  return new ol.layer.Image({source: source});
 };
 
 
@@ -84106,7 +84109,7 @@ ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
  * @param {string} capabilitiesURL The getCapabilities url.
  * @param {string} layerName The name of the layer.
  * @param {Object.<string, string>=} opt_dimensions WMTS dimensions.
- * @return {angular.$q.Promise} A Promise with a layer (with source) on success,
+ * @return {angular.$q.Promise.<ol.layer.Tile>} A Promise with a layer (with source) on success,
  *     no layer else.
  * @export
  */
@@ -118457,7 +118460,6 @@ goog.provide('ngeo.BackgroundLayerMgr');
 
 goog.require('goog.asserts');
 goog.require('ngeo');
-goog.require('ol.obj');
 goog.require('ol.Observable');
 goog.require('ol.events');
 goog.require('ol.source.ImageWMS');
@@ -118612,14 +118614,16 @@ ngeo.BackgroundLayerMgr.prototype.updateDimensions = function(map, dimensions) {
     layers.forEach(function(layer) {
       goog.asserts.assertInstanceof(layer, ol.layer.Layer);
       if (layer) {
+        var hasUpdates = false;
         var updatedDimensions = {};
         for (var key in layer.get('dimensions')) {
           var value = dimensions[key];
           if (value !== undefined) {
             updatedDimensions[key] = value;
+            hasUpdates = true;
           }
         }
-        if (!ol.obj.isEmpty(dimensions)) {
+        if (hasUpdates) {
           var source = layer.getSource();
           if (source instanceof ol.source.WMTS) {
             source.updateDimensions(updatedDimensions);
