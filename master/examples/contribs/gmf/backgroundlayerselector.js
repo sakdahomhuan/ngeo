@@ -25,6 +25,12 @@ app.MainController = function(gmfThemes) {
   gmfThemes.loadThemes();
 
   /**
+   * @type {Object.<string, string>}
+   * @export
+   */
+  this.dimensions = {};
+
+  /**
    * @type {ol.Map}
    * @export
    */
