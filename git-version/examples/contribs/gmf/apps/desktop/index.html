@@ -6,7 +6,7 @@
     <link rel="shortcut icon" href="image/favicon.ico"/>
     <link rel="stylesheet" href="../../build/desktop.css">
   </head>
-  <body ng-class="{'profile-chart-active': !!profileChartActive}">
+  <body ng-class="{'gmf-profile-chart-active': !!profileChartActive}">
     <header>
       <div>
         <img src="image/logo.png" />
@@ -58,7 +58,8 @@
               <span class="fa fa-paint-brush"></span>
             </button>
             <button ngeo-btn class="btn btn-default" ng-model="mainCtrl.editFeatureActive"
-              data-toggle="tooltip" data-placement="left" data-original-title="{{'Editing'|translate}}">
+              data-toggle="tooltip" data-placement="left" data-original-title="{{'Editing'|translate}}"
+              ng-show="mainCtrl.hasEditableLayers">
               <span class="fa fa-pencil"></span>
             </button>
             <button ngeo-btn class="btn btn-default" ng-model="mainCtrl.drawProfilePanelActive"
@@ -239,7 +240,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = '103bf4a6777f5021cda1eedd90003a72b6073639';
+        var cacheVersion = '343eea168bfa0e84e173dd053f4740c42a58e3d4';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
@@ -277,6 +278,16 @@
                 {action: 'add_layer', title: 'Add a layer'}
         ]);
         module.constant('gmfContextualdatacontentTemplateUrl', window.location.pathname + 'contextualdata.html');
+        module.value('ngeoWfsPermalinkOptions',
+            /** @type {ngeox.WfsPermalinkOptions} */ ({
+              url: 'https://geomapfish-demo.camptocamp.net/2.1/wsgi/mapserv_proxy',
+              wfsTypes: [
+                {featureType: 'fuel', label: 'display_name'},
+                {featureType: 'osm_scale', label: 'display_name'}
+              ],
+              defaultFeatureNS: 'http://mapserver.gis.umn.edu/mapserver',
+              defaultFeaturePrefix: 'feature'
+            }));
       })();
     </script>
   </body>
