@@ -98309,6 +98309,44 @@ ngeo.interaction.DrawAzimut.prototype.setMap = function(map) {
   this.updateState_();
 };
 
+goog.provide('ngeo.Download');
+
+goog.require('ngeo');
+
+/**
+ * @typedef {function(string, string, string=)}
+ */
+ngeo.Download;
+
+/**
+ * A service to start a download for a file.
+ *
+ * @private
+ * @return {ngeo.Download} The download function.
+ * @ngdoc service
+ * @ngname ngeoDownload
+ */
+ngeo.downloadFactory_ = function() {
+  /**
+   * @param {string} content The file content.
+   * @param {string} fileName The file name.
+   * @param {string=} opt_fileType The file type. If not given,
+   *    `text/plain;charset=utf-8` is used.
+   */
+  function download(content, fileName, opt_fileType) {
+    /** @type{string} */
+    var fileType = (opt_fileType !== undefined) ? opt_fileType :
+        'text/plain;charset=utf-8';
+
+    var blob = new Blob([content], {type: fileType});
+    saveAs(blob, fileName);
+  }
+
+  return download;
+};
+
+ngeo.module.factory('ngeoDownload', ngeo.downloadFactory_);
+
 goog.provide('ngeo.FeatureHelper');
 
 goog.require('ngeo');
@@ -98316,6 +98354,7 @@ goog.require('ngeo');
 goog.require('ngeo.filters');
 goog.require('ngeo.interaction.Measure');
 goog.require('ngeo.interaction.MeasureAzimut');
+goog.require('ngeo.Download');
 goog.require('ol.Feature');
 goog.require('ol.geom.LineString');
 goog.require('ol.geom.MultiPoint');
@@ -98398,6 +98437,13 @@ ngeo.FeatureHelper = function($injector, $filter) {
    * @private
    */
   this.projection_;
+
+  /**
+   * Download service.
+   * @type {ngeo.Download}
+   * @private
+   */
+  this.download_ = $injector.get('ngeoDownload');
 
 };
 
@@ -99029,16 +99075,8 @@ ngeo.FeatureHelper.prototype.export_ = function(features, format, fileName,
   } : {};
 
   var data = format.writeFeatures(clones, writeOptions);
-
-  // FF requires the link to be in the body
-  var hiddenElement = document.createElement('a');
-  document.body.appendChild(hiddenElement);
-  hiddenElement.href = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(data);
-  hiddenElement.target = '_blank';
-  hiddenElement.download = fileName;
-  hiddenElement.click();
-  document.body.removeChild(hiddenElement);
-
+  this.download_(
+      data, fileName, mimeType + ';charset=utf-8');
 };
 
 
@@ -118768,6 +118806,7 @@ ngeo.module.value('ngeoCreateGeoJSONBloodhound', ngeo.createGeoJSONBloodhound);
 goog.provide('ngeo.CsvDownload');
 
 goog.require('ngeo');
+goog.require('ngeo.Download');
 
 
 /**
@@ -118828,6 +118867,13 @@ ngeo.CsvDownload = function($injector, gettextCatalog) {
    */
   this.separator_ = $injector.has('ngeoCsvSeparator') ?
     $injector.get('ngeoCsvSeparator') : ',';
+
+  /**
+   * Download service.
+   * @type {ngeo.Download}
+   * @private
+   */
+  this.download_ = $injector.get('ngeoDownload');
 };
 
 
@@ -118893,16 +118939,8 @@ ngeo.CsvDownload.prototype.getRow_ = function(values) {
  */
 ngeo.CsvDownload.prototype.startDownload = function(data, columnDefs, fileName) {
   var fileContent = this.generateCsv(data, columnDefs);
-
-  var hiddenElement = document.createElement('a');
-  // FF requires the link to be in the body
-  document.body.appendChild(hiddenElement);
-  hiddenElement.href = 'data:attachment/csv;charset=' + this.encoding_ +
-    ',' + encodeURI(fileContent);
-  hiddenElement.target = '_blank';
-  hiddenElement.download = fileName + this.extension_;
-  hiddenElement.click();
-  document.body.removeChild(hiddenElement);
+  this.download_(
+      fileContent, fileName, 'attachment/csv;charset=' + this.encoding_);
 };
 
 ngeo.module.service('ngeoCsvDownload', ngeo.CsvDownload);
