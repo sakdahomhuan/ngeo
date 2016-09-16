@@ -59,12 +59,12 @@ the feature on the map.</p>
 <p>Example:</p>
 <pre class="prettyprint source"><code>&lt;gmf-editfeature
     gmf-editfeature-dirty=&quot;ctrl.dirty&quot;
-    gmf-editfeature-layer=&quot;::ctrl.layer&quot;
+    gmf-editfeature-editablenode=&quot;::ctrl.node&quot;
+    gmf-editfeature-editablewmslayer=&quot;::ctrl.selectedWMSLayer&quot;
     gmf-editfeature-map=&quot;::ctrl.map&quot;
     gmf-editfeature-state=&quot;efsCtrl.state&quot;
     gmf-editfeature-tolerance=&quot;::ctrl.tolerance&quot;
-    gmf-editfeature-vector=&quot;::ctrl.vectorLayer&quot;
-    gmf-editfeature-wmslayer=&quot;::ctrl.selectedWMSLayer&quot;>
+    gmf-editfeature-vector=&quot;::ctrl.vectorLayer&quot;>
 &lt;/gmf-editfeature></code></pre>
 </div>
 
@@ -103,7 +103,32 @@ the feature on the map.</p>
 
         <tr>
             
-                <td class="name"><code>gmf-editfeature-layer</code></td>
+                <td class="name"><code>gmf-editfeature-dirty</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean">boolean</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">Flag that is toggled as soon
+    as the feature changes, i.e. if any of its properties change, which
+    includes the geometry.</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>gmf-editfeature-editablenode</code></td>
             
 
             <td class="type">
@@ -119,8 +144,34 @@ the feature on the map.</p>
 
             
 
-            <td class="description last">The GMF node of the
-    editable layer.</td>
+            <td class="description last">The GMF node
+    representing the editable layer.</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>gmf-editfeature-editablewmslayer</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.layer.Image.html">ol.layer.Image</a></span>
+|
+
+<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.layer.Tile.html">ol.layer.Tile</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">The WMS layer to refresh after each saved modification.</td>
         </tr>
 
     
@@ -222,33 +273,6 @@ the feature on the map.</p>
         </tr>
 
     
-
-        <tr>
-            
-                <td class="name"><code>gmf-editfeature-wmslayer</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.layer.Image.html">ol.layer.Image</a></span>
-|
-
-<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.layer.Tile.html">ol.layer.Tile</a></span>
-
-
-            
-            </td>
-
-            
-
-            
-
-            <td class="description last">The
-    WMS layer to refresh after each saved modification.</td>
-        </tr>
-
-    
     </tbody>
 </table>
 
@@ -287,8 +311,8 @@ the feature on the map.</p>
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/761c2c70168409abb76079fbc2eba8bd0fcbbbfc/contribs/gmf/src/directives/editfeature.js">contribs/gmf/src/directives/editfeature.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/761c2c70168409abb76079fbc2eba8bd0fcbbbfc/contribs/gmf/src/directives/editfeature.js#L71">line 71</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/d8c4731c68607237433dab9a31a55b79029dfe5c/contribs/gmf/src/directives/editfeature.js">contribs/gmf/src/directives/editfeature.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/d8c4731c68607237433dab9a31a55b79029dfe5c/contribs/gmf/src/directives/editfeature.js#L74">line 74</a>
     </li></ul></dd>
     
 
