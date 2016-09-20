@@ -26,7 +26,6 @@
               <span class="caret"></span>
             </a>
             <gmf-themeselector class="dropdown-menu"
-              gmf-themeselector-defaulttheme="OSM"
               gmf-themeselector-currenttheme="mainCtrl.theme"
               gmf-themeselector-filter="::mainCtrl.filter">
             </gmf-themeselector>
@@ -59,7 +58,7 @@
             </button>
             <button ngeo-btn class="btn btn-default" ng-model="mainCtrl.editFeatureActive"
               data-toggle="tooltip" data-placement="left" data-original-title="{{'Editing'|translate}}"
-              ng-show="mainCtrl.hasEditableLayers">
+              ng-show="mainCtrl.hasEditableLayers" ng-cloak>
               <span class="fa fa-pencil"></span>
             </button>
             <button ngeo-btn class="btn btn-default" ng-model="mainCtrl.drawProfilePanelActive"
@@ -239,7 +238,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = 'c40caed7d04163a3e7e1c8ffa154d31feadb0cb4';
+        var cacheVersion = '676265c5cdfb3db5da8985f16b26b375bc2caafa';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
@@ -256,6 +255,7 @@
         });
 
         var module = angular.module('app');
+        module.constant('defaultTheme', 'OSM');
         module.constant('defaultLang', 'en');
         module.constant('langUrls', langUrls);
         module.constant('cacheVersion', cacheVersion);

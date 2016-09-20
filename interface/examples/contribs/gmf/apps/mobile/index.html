@@ -96,7 +96,6 @@
         id="themes"
         class="gmf-mobile-nav-slide"
         data-header-title="{{'Themes' | translate}}"
-        gmf-themeselector-defaulttheme="OSM"
         gmf-themeselector-currenttheme="mainCtrl.theme"
         gmf-themeselector-filter="::mainCtrl.filter"
         gmf-mobile-nav-back-on-click>
@@ -145,7 +144,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = 'c40caed7d04163a3e7e1c8ffa154d31feadb0cb4';
+        var cacheVersion = '676265c5cdfb3db5da8985f16b26b375bc2caafa';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
@@ -162,6 +161,7 @@
         });
 
         var module = angular.module('app');
+        module.constant('defaultTheme', 'OSM');
         module.constant('defaultLang', 'en');
         module.constant('langUrls', langUrls);
         module.constant('cacheVersion', cacheVersion);

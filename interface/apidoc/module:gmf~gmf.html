@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>JSDoc: Class: drawprofilelineDirective <small>directive:gmfDrawprofileline</small></title>
+    <title>JSDoc: Namespace: module:gmf~gmf</title>
 
     <script src="scripts/prettify/prettify.js"> </script>
     <script src="scripts/prettify/lang-css.js"> </script>
@@ -17,7 +17,7 @@
 
 <div id="main">
 
-    <h1 class="page-title">Class: drawprofilelineDirective <small>directive:gmfDrawprofileline</small></h1>
+    <h1 class="page-title">Namespace: module:gmf~gmf</h1>
 
     
 
@@ -28,8 +28,8 @@
 
 <header>
     
-        <h2 id="drawprofilelineDirective">
-            <span class="ancestors">gmf.</span>drawprofilelineDirective
+        <h2 id="PermalinkParam">
+            <span class="ancestors">module:gmf~gmf.</span>PermalinkParam
         </h2>
         
     
@@ -40,40 +40,16 @@
     
         
 
+        
+
+
+    
+    <h5 class="subsection-title">Enumeration:</h5>
     
 
-    <h4 class="name" id="drawprofilelineDirective"><span class="type-signature"></span>new drawprofilelineDirective<span class="signature">()</span><span class="type-signature"></span></h4>
-
     
 
-
-
-<div class="description">
-    <p>Simple directive that can be put on any element. The directive listen on
-clicks events to allow/disallow to draw one line (and only one) on the
-map. Typically used to draw the line that will serve the gmf.Profile.</p>
-<p>Example:</p>
-<pre class="prettyprint source"><code> &lt;gmf-drawprofileline
-   gmf-drawprofileline-active=&quot;mainCtrl.drawProfileActive&quot;
-   gmf-drawprofileline-map=&quot;mainCtrl.map&quot;
-   gmf-drawprofileline-line=&quot;mainCtrl.line&quot;
- &lt;/gmf-drawprofileline></code></pre>
-</div>
-
-
-
-
-
-
-
-
-
-
-
-    <h5>HTML attributes:</h5>
-    
-
-<table class="params">
+<table class="props">
     <thead>
     <tr>
         
@@ -83,12 +59,12 @@ map. Typically used to draw the line that will serve the gmf.Profile.</p>
         <th>Type</th>
 
         
-        <th>Attributes</th>
-        
 
         
 
+        
         <th class="last">Description</th>
+        
     </tr>
     </thead>
 
@@ -97,137 +73,280 @@ map. Typically used to draw the line that will serve the gmf.Profile.</p>
 
         <tr>
             
-                <td class="name"><code>gmf-drawprofileline-map</code></td>
+                <td class="name"><code>BG_LAYER</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.Map.html">ol.Map</a></span>
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
 
 
             
             </td>
 
             
-                <td class="attributes">
-                
-
-                
-
-                
-                </td>
-            
 
             
 
-            <td class="description last">The map.</td>
+            
+            <td class="description last"></td>
+            </td>
         </tr>
 
     
 
         <tr>
             
-                <td class="name"><code>gmf-drawprofileline-line</code></td>
+                <td class="name"><code>FEATURES</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.geom.LineString.html">ol.geom.LineString</a></span>
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
 
 
             
             </td>
 
             
-                <td class="attributes">
-                
-
-                
-
-                
-                </td>
-            
 
             
 
-            <td class="description last">The variable to
-    connect with the drawed line.</td>
+            
+            <td class="description last"></td>
+            </td>
         </tr>
 
     
 
         <tr>
             
-                <td class="name"><code>gmf-drawprofileline-active</code></td>
+                <td class="name"><code>MAP_CROSSHAIR</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean">boolean</a></span>
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
 
 
             
             </td>
 
             
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
 
             
 
-            <td class="description last">Active the component.</td>
+            
+            <td class="description last"></td>
+            </td>
         </tr>
 
     
 
         <tr>
             
-                <td class="name"><code>gmf-drawprofileline-style</code></td>
+                <td class="name"><code>MAP_TOOLTIP</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type"><a href="http://openlayers.org/en/master/apidoc/ol.style.Style.html">ol.style.Style</a></span>
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
 
 
             
             </td>
 
             
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
 
-                
+            
 
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>MAP_X</code></td>
+            
+
+            <td class="type">
+            
                 
-                </td>
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
             
 
             
 
-            <td class="description last">Optional style
-    for the drawed line.</td>
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>MAP_Y</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>MAP_Z</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>TREE_GROUPS</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>WFS_LAYER</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>WFS_NGROUPS</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>WFS_SHOW_FEATURES</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            
+            <td class="description last"></td>
+            </td>
         </tr>
 
     
     </tbody>
 </table>
-
-
 
 
 
@@ -262,8 +381,8 @@ map. Typically used to draw the line that will serve the gmf.Profile.</p>
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/676265c5cdfb3db5da8985f16b26b375bc2caafa/contribs/gmf/src/directives/drawprofileline.js">contribs/gmf/src/directives/drawprofileline.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/676265c5cdfb3db5da8985f16b26b375bc2caafa/contribs/gmf/src/directives/drawprofileline.js#L37">line 37</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/676265c5cdfb3db5da8985f16b26b375bc2caafa/contribs/gmf/src/gmf.js">contribs/gmf/src/gmf.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/676265c5cdfb3db5da8985f16b26b375bc2caafa/contribs/gmf/src/gmf.js#L48">line 48</a>
     </li></ul></dd>
     
 
@@ -275,20 +394,7 @@ map. Typically used to draw the line that will serve the gmf.Profile.</p>
 </dl>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        
     
     </div>
 
