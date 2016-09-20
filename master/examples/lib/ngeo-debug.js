@@ -85882,9 +85882,6 @@ ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
         }
       }
 
-      item['resultSource'].pending = true;
-      item['resultSource'].queried = true;
-
       if (item.source.wfsQuery) {
         // use WFS GetFeature
         url = item.source.urlWfs || item.source.wmsSource.getUrl();
@@ -85908,8 +85905,6 @@ ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
           this.pushSourceIfUnique_(item, wmsItemsByUrl[url]);
         } else {
           // TODO - support other kinds of infoFormats
-          item['resultSource'].pending = false;
-          item['resultSource'].queried = false;
         }
       }
     }
@@ -85957,6 +85952,12 @@ ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
   var resolution = /** @type {number} */(view.getResolution());
 
   angular.forEach(wmsItemsByUrl, function(items) {
+
+    items.forEach(function(item) {
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
+    });
+
     var infoFormat = items[0].source.infoFormat;
     var wmsGetFeatureInfoUrl = items[0].source.wmsSource.getGetFeatureInfoUrl(
         coordinate, resolution, projCode, {
@@ -86027,10 +86028,11 @@ ngeo.Query.prototype.doGetFeatureRequests_ = function(
 
       if (layers.length == 0 || layers[0] === '') {
         // do not query source if no valid layers
-        item['resultSource'].pending = false;
-        item['resultSource'].queried = false;
         return;
       }
+
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
 
       /** @type{olx.format.WFSWriteGetFeatureOptions} */
       var getFeatureOptions = {
