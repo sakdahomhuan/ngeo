@@ -1,10 +1,10 @@
-<span ng-if="::!layertreeCtrl.isRoot">{{::layertreeCtrl.node.name}}</span>
-<input type="checkbox" ng-if="::layertreeCtrl.node && !layertreeCtrl.node.children"
+<span ng-if="::!layertreeCtrl.isRoot">{{::layertreeCtrl.initialConfig.name}}</span>
+<input type="checkbox" ng-if="::layertreeCtrl.initialConfig && !layertreeCtrl.initialConfig.children"
     ng-model="layertreeCtrl.getSetActive" ng-model-options="{getterSetter: true}"/>
-<button ng-if="::layertreeCtrl.node && !layertreeCtrl.node.children"
-        ng-click="ctrl.onButtonClick(layertreeCtrl.node, layertreeCtrl.layer)">i</button>
-<ul ng-if="::layertreeCtrl.node.children">
-  <li ng-repeat="node in ::layertreeCtrl.node.children"
+<button ng-if="::layertreeCtrl.initialConfig && !layertreeCtrl.initialConfig.children"
+        ng-click="ctrl.onButtonClick(layertreeCtrl.initialConfig, layertreeCtrl.layer)">i</button>
+<ul ng-if="::layertreeCtrl.initialConfig.children">
+  <li ng-repeat="node in ::layertreeCtrl.initialConfig.children"
       ngeo-layertree="::node"
       ngeo-layertree-templateurl="partials/layertree.html"
       ngeo-layertree-notroot

@@ -249,11 +249,8 @@ gmf.EditfeatureselectorController.prototype.handleDestroy_ = function() {
  * @return {boolean} Whether the Layertree controller contains an editable node.
  * @private
  */
-gmf.EditfeatureselectorController.prototype.isTreeCtrlEditable_ = function(
-  treeCtrl
-) {
-  var node = /** @type {GmfThemesLeaf} */ (treeCtrl.node);
-  return node.editable === true;
+gmf.EditfeatureselectorController.prototype.isTreeCtrlEditable_ = function(treeCtrl) {
+  return treeCtrl.initialConfig.editable === true;
 };
 
 

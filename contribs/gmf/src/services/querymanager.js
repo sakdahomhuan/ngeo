@@ -104,27 +104,27 @@ gmf.QueryManager.prototype.handleThemesChange_ = function() {
 
 
 /**
- * Create and add a source for the query service from the GMF theme node if
+ * Create and add a source for the query service from the GMF theme initialConfig if
  * it has no children, otherwise create the sources for each child node if
  * it has any.
- * @param {GmfThemesBackground|GmfThemesTheme|GmfThemesGroup|GmfThemesLeaf} node A node.
+ * @param {GmfThemesBackground|GmfThemesTheme|GmfThemesGroup|GmfThemesLeaf} initialConfig A initialConfig.
  * @param {GmfOgcServers} ogcServers OGC servers.
  * @private
  */
-gmf.QueryManager.prototype.createSources_ = function(node, ogcServers) {
-  var meta = node.metadata;
-  var children = node.children;
-  var id = node.id;
+gmf.QueryManager.prototype.createSources_ = function(initialConfig, ogcServers) {
+  var meta = initialConfig.metadata;
+  var children = initialConfig.children;
+  var id = initialConfig.id;
   var identifierAttributeField = meta.identifierAttributeField;
-  var layers = meta.wmsLayers || meta.queryLayers || node.layers;
-  var name = node.name;
-  var url = meta.wmsUrl || node.url || this.gmfWmsUrl_;
+  var layers = meta.wmsLayers || meta.queryLayers || initialConfig.layers;
+  var name = initialConfig.name;
+  var url = meta.wmsUrl || initialConfig.url || this.gmfWmsUrl_;
   var validateLayerParams = false;
   var wfsQuery;
 
   // Don't create sources for WMTS layers without wmsUrl and ogcServer,
   // they are not queryable.
-  if (node.type === 'WMTS' && !meta.wmsUrl) {
+  if (initialConfig.type === 'WMTS' && !meta.wmsUrl) {
     if (meta.ogcServer && ogcServers[meta.ogcServer]) {
       var ogcServer = ogcServers[meta.ogcServer];
       url = ogcServer.urlWfs;
@@ -147,23 +147,23 @@ gmf.QueryManager.prototype.createSources_ = function(node, ogcServers) {
       // group named 'osm' might result in returning 'restaurant' features.
       // This override makes sure that those layer names are used instead of
       // the original one.
-      if (node.childLayers && node.childLayers.length) {
+      if (initialConfig.childLayers && initialConfig.childLayers.length) {
         // skip layers with no queryable childLayer
         var isQueryable = function(item) {
           return item.queryable;
         };
-        if (!node.childLayers.some(isQueryable)) {
+        if (!initialConfig.childLayers.some(isQueryable)) {
           return;
         }
 
         var childLayerNames = [];
-        node.childLayers.forEach(function(childLayer) {
+        initialConfig.childLayers.forEach(function(childLayer) {
           if (childLayer.queryable) {
             childLayerNames.push(childLayer.name);
           }
         }, this);
         layers = childLayerNames.join(',');
-        validateLayerParams = node.type === 'WMS';
+        validateLayerParams = initialConfig.type === 'WMS';
       }
 
       var source = {

@@ -160,15 +160,15 @@ ngeo.LayertreeController = function($scope, $attrs, ngeoDecorateLayer, ngeoDecor
    * @type {Object|undefined}
    * @export
    */
-  this.node = undefined;
+  this.initialConfig = undefined;
 
   if (isRoot) {
     $scope.$watch(nodeExpr, function(newVal, oldVal) {
-      this.node = newVal;
+      this.initialConfig = newVal;
     }.bind(this));
   } else {
-    this.node = /** @type {Object} */ ($scope.$eval(nodeExpr));
-    goog.asserts.assert(this.node !== undefined);
+    this.initialConfig = /** @type {Object} */ ($scope.$eval(nodeExpr));
+    goog.asserts.assert(this.initialConfig !== undefined);
   }
 
   var mapExpr = $attrs['ngeoLayertreeMap'];

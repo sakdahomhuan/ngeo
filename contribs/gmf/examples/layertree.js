@@ -180,10 +180,10 @@ app.MainController = function(gmfThemes, gmfTreeManager, ngeoLocation) {
           this.getDistinctFlatNodes_(group, flatNodes);
         }.bind(this));
       }.bind(this));
-      flatNodes.forEach(function(node) {
+      flatNodes.forEach(function(initialConfig) {
         // Get an array of all layers
-        if (node.children === undefined) {
-          this.layers.push(node);
+        if (initialConfig.children === undefined) {
+          this.layers.push(initialConfig);
         }
       }.bind(this));
 
@@ -195,26 +195,26 @@ app.MainController = function(gmfThemes, gmfTreeManager, ngeoLocation) {
 
   /**
    * Just for this example
-   * @param {GmfThemesNode} node A theme, group or layer node.
-   * @param {Array.<GmfThemesNode>} nodes An Array of nodes.
+   * @param {GmfThemesNode} initialConfig A theme, group or layer initialConfig.
+   * @param {Array.<GmfThemesNode>} initialConfigs An Array of initialConfigs.
    * @export
    */
-  this.getDistinctFlatNodes_ = function(node, nodes) {
+  this.getDistinctFlatNodes_ = function(initialConfig, initialConfigs) {
     var i;
-    var children = node.children;
+    var children = initialConfig.children;
     if (children !== undefined) {
       for (i = 0; i < children.length; i++) {
-        this.getDistinctFlatNodes_(children[i], nodes);
+        this.getDistinctFlatNodes_(children[i], initialConfigs);
       }
     }
     var alreadyAdded = false;
-    nodes.some(function(n) {
-      if (n.id === node.id) {
+    initialConfigs.some(function(n) {
+      if (n.id === initialConfig.id) {
         return alreadyAdded = true;
       }
     });
     if (!alreadyAdded) {
-      nodes.push(node);
+      initialConfigs.push(initialConfig);
     }
   };
 };

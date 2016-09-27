@@ -87,17 +87,17 @@ describe('Permalink service', function() {
   it('Should register a layer with the previous state saved in loacalStorage. TESTING MIXED GROUP ONLY', function() {
 
     //delete non-mixed group from children
-    osmThemeNode.children = osmThemeNode.children.filter(function(node) {
-      return node.name === 'OSM function';
+    osmThemeNode.children = osmThemeNode.children.filter(function(initialConfig) {
+      return initialConfig.name === 'OSM function';
     });
 
     //only 1 theme for testing
     PermalinkService.themes_ = [osmThemeNode];
 
     //adding layer for each node to the map
-    var fakeLayers = osmThemeNode.children[0].children.map(function(node) {
+    var fakeLayers = osmThemeNode.children[0].children.map(function(initialConfig) {
       var layer = new ol.layer.Layer({
-        layerName : node.name,
+        layerName : initialConfig.name,
         visible : true
       });
       dataGroup.getLayers().insertAt(0, layer);

@@ -6,7 +6,7 @@
         class="form-control"
         ng-model="efsCtrl.selectedEditableTreeCtrl"
         ng-show="efsCtrl.editableTreeCtrls.length > 0"
-        ng-options="treeCtrl.node.name | translate for treeCtrl in efsCtrl.editableTreeCtrls">
+        ng-options="treeCtrl.initialConfig.name | translate for treeCtrl in efsCtrl.editableTreeCtrls">
       <option value="" translate>-- Choose a layer --</option>
     </select>
     <span

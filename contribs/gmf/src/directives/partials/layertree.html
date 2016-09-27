@@ -1,7 +1,7 @@
 <div
   ng-if="::!layertreeCtrl.isRoot"
   id="gmf-layertree-node-{{::layertreeCtrl.uid}}"
-  ng-class="[layertreeCtrl.node.children ? 'gmf-layertree-group' : 'gmf-layertree-leaf', 'gmf-layertree-depth-' + layertreeCtrl.depth, gmfLayertreeCtrl.getResolutionStyle(layertreeCtrl.node), gmfLayertreeCtrl.getNodeState(layertreeCtrl)]">
+  ng-class="[layertreeCtrl.initialConfig.children ? 'gmf-layertree-group' : 'gmf-layertree-leaf', 'gmf-layertree-depth-' + layertreeCtrl.depth, gmfLayertreeCtrl.getResolutionStyle(layertreeCtrl.initialConfig), gmfLayertreeCtrl.getNodeState(layertreeCtrl)]">
 
   <div
     class="ngeo-sortable-handle"
@@ -10,17 +10,17 @@
   </div>
 
   <a
-    ng-if="::layertreeCtrl.node.children"
+    ng-if="::layertreeCtrl.initialConfig.children"
     data-toggle="collapse"
     href="#gmf-layertree-layer-group-{{::layertreeCtrl.uid}}"
-    aria-expanded="{{::layertreeCtrl.node.metadata.isExpanded}}"
+    aria-expanded="{{::layertreeCtrl.initialConfig.metadata.isExpanded}}"
     class="fa gmf-layertree-expand-node fa-fw">
   </a>
 
   <a
     href
     ng-click="::gmfLayertreeCtrl.toggleActive(layertreeCtrl)"
-    ng-if="::!layertreeCtrl.node.children" ng-class="::{'gmf-layertree-no-layer-icon' : !gmfLayertreeCtrl.getLegendIconURL(layertreeCtrl)}"
+    ng-if="::!layertreeCtrl.initialConfig.children" ng-class="::{'gmf-layertree-no-layer-icon' : !gmfLayertreeCtrl.getLegendIconURL(layertreeCtrl)}"
     class="gmf-layertree-layer-icon">
 
     <img
@@ -32,17 +32,17 @@
   <a
     href
     ng-click="::gmfLayertreeCtrl.toggleActive(layertreeCtrl)"
-    ng-if="::layertreeCtrl.node.children"
-    ng-class="['fa fa-fw', layertreeCtrl.node.children && !layertreeCtrl.layer.loading ? 'gmf-layertree-state' : 'fa-refresh fa-spin']">
+    ng-if="::layertreeCtrl.initialConfig.children"
+    ng-class="['fa fa-fw', layertreeCtrl.initialConfig.children && !layertreeCtrl.layer.loading ? 'gmf-layertree-state' : 'fa-refresh fa-spin']">
   </a>
 
   <a
     href
     ng-click="::gmfLayertreeCtrl.toggleActive(layertreeCtrl)"
     class="gmf-layertree-name"
-    title="{{layertreeCtrl.node.name | translate}}">
+    title="{{layertreeCtrl.initialConfig.name | translate}}">
 
-    {{layertreeCtrl.node.name | translate}}
+    {{layertreeCtrl.initialConfig.name | translate}}
 
     <i
       class="gmf-icon gmf-icon-search-go gmf-layertree-zoom"
@@ -55,7 +55,7 @@
     <span
       ngeo-popover
       ngeo-popover-dismiss=".content"
-      ng-if="gmfLayertreeCtrl.getNodeState(layertreeCtrl) !== 'off' && layertreeCtrl.node.time && layertreeCtrl.node.time.mode !== 'disabled'">
+      ng-if="gmfLayertreeCtrl.getNodeState(layertreeCtrl) !== 'off' && layertreeCtrl.initialConfig.time && layertreeCtrl.initialConfig.time.mode !== 'disabled'">
 
       <span
         ngeo-popover-anchor
@@ -65,14 +65,14 @@
 
       <div ngeo-popover-content>
         <ngeo-date-picker
-          ng-if="::layertreeCtrl.node.time.widget === 'datepicker'"
-          time="layertreeCtrl.node.time"
+          ng-if="::layertreeCtrl.initialConfig.time.widget === 'datepicker'"
+          time="layertreeCtrl.initialConfig.time"
           on-date-selected="gmfLayertreeCtrl.updateWMSTimeLayerState(layertreeCtrl, time)">
         </ngeo-date-picker>
 
         <gmf-time-slider
-          ng-if="::layertreeCtrl.node.time.widget === 'slider'"
-          gmf-time-slider-time="layertreeCtrl.node.time"
+          ng-if="::layertreeCtrl.initialConfig.time.widget === 'slider'"
+          gmf-time-slider-time="layertreeCtrl.initialConfig.time"
           gmf-time-slider-on-date-selected="gmfLayertreeCtrl.updateWMSTimeLayerState(layertreeCtrl, time)">
         </gmf-time-slider>
       </div>
@@ -89,13 +89,13 @@
     <a
       href=""
       ng-if="::layertreeCtrl.depth == 1"
-      ng-click="gmfLayertreeCtrl.removeNode(layertreeCtrl.node)">
+      ng-click="gmfLayertreeCtrl.removeNode(layertreeCtrl.initialConfig)">
       <span class="fa fa-trash"></span>
     </a>
 
     <span
       ngeo-popover
-      ng-if="::(layertreeCtrl.depth === 1 && !layertreeCtrl.node.mixed) || (layertreeCtrl.depth > 1 && layertreeCtrl.parent.node.mixed && !layertreeCtrl.node.children) || (gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.node.metadata.legend)" ngeo-popover-dismiss=".content">
+      ng-if="::(layertreeCtrl.depth === 1 && !layertreeCtrl.initialConfig.mixed) || (layertreeCtrl.depth > 1 && layertreeCtrl.parent.node.mixed && !layertreeCtrl.initialConfig.children) || (gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.initialConfig.metadata.legend)" ngeo-popover-dismiss=".content">
 
       <span
         ngeo-popover-anchor
@@ -104,7 +104,7 @@
 
       <div ngeo-popover-content>
         <ul>
-          <li ng-if="::(layertreeCtrl.depth === 1 && !layertreeCtrl.node.mixed) || (layertreeCtrl.depth > 1 && layertreeCtrl.parent.node.mixed)">
+          <li ng-if="::(layertreeCtrl.depth === 1 && !layertreeCtrl.initialConfig.mixed) || (layertreeCtrl.depth > 1 && layertreeCtrl.parent.node.mixed)">
             <i class="fa fa-tint fa-fw"></i>
             <span for="layer-opactity">{{'Opacity'|translate}}</span>
             <input
@@ -116,7 +116,7 @@
               step="0.01"
               ng-model="layertreeCtrl.layer.opacity" />
           </li>
-          <li ng-if="::gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.node.metadata.legend">
+          <li ng-if="::gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.initialConfig.metadata.legend">
             <i class="fa fa-th-list fa-fw"></i>
             <a
               title="{{'Show/hide legend'|translate}}"
@@ -132,12 +132,12 @@
 
     <span
       class="gmf-layertree-metadata"
-      ng-if="::layertreeCtrl.node.metadata.metadataUrl">
+      ng-if="::layertreeCtrl.initialConfig.metadata.metadataUrl">
 
       <span ng-if="::gmfLayertreeCtrl.openLinksInNewWindow === true">
         <a
           title="{{'More informations'|translate}}"
-          href="{{::layertreeCtrl.node.metadata.metadataUrl}}"
+          href="{{::layertreeCtrl.initialConfig.metadata.metadataUrl}}"
           target="blank_">
         </a>
       </span>
@@ -152,7 +152,7 @@
 
     <a
       class="fa fa-align-left gmf-layertree-legend-button"
-      ng-if="::gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.node.metadata.legend"
+      ng-if="::gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.initialConfig.metadata.legend"
       title="{{'Show/hide legend'|translate}}"
       data-toggle="collapse"
       href="#gmf-layertree-node-{{::layertreeCtrl.uid}}-legend">
@@ -161,9 +161,9 @@
 </div>
 
 <div
-  ng-if="::!layertreeCtrl.isRoot && gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.node.metadata.legend" id="gmf-layertree-node-{{::layertreeCtrl.uid}}-legend"
+  ng-if="::!layertreeCtrl.isRoot && gmfLayertreeCtrl.getLegendURL(layertreeCtrl) && layertreeCtrl.initialConfig.metadata.legend" id="gmf-layertree-node-{{::layertreeCtrl.uid}}-legend"
   class="collapse gmf-layertree-legend"
-  ng-class="::[layertreeCtrl.node.metadata.isLegendExpanded ? 'in' : '']">
+  ng-class="::[layertreeCtrl.initialConfig.metadata.isLegendExpanded ? 'in' : '']">
 
   <a
     title="{{'Hide legend'|translate}}"
@@ -178,19 +178,19 @@
 
 <ul
   id="gmf-layertree-layer-group-{{::layertreeCtrl.uid}}"
-  ng-if="::layertreeCtrl.node.children"
-  ng-class="{collapse: !layertreeCtrl.isRoot, in : layertreeCtrl.node.metadata.isExpanded}"
+  ng-if="::layertreeCtrl.initialConfig.children"
+  ng-class="{collapse: !layertreeCtrl.isRoot, in : layertreeCtrl.initialConfig.metadata.isExpanded}"
   ngeo-sortable="::layertreeCtrl.isRoot && gmfLayertreeCtrl.layers"
   ngeo-sortable-options="{handleClassName: 'ngeo-sortable-handle', draggerClassName: 'gmf-layertree-dragger', currDragItemClassName : 'gmf-layertree-curr-drag-item'}">
 
   <li
     class="gmf-layertree-node"
-    ng-repeat="node in layertreeCtrl.node.children"
+    ng-repeat="node in layertreeCtrl.initialConfig.children"
     ng-class="'gmf-layertree-depth-' + layertreeCtrl.depth"
     ngeo-layertree="node"
     ngeo-layertree-notroot
     ngeo-layertree-map="layertreeCtrl.map"
-    ngeo-layertree-nodelayerexpr="layertreeCtrl.nodelayerExpr"
+    ngeo-layertree-nodelayerexpr="layertreeCtrl.initialConfiglayerExpr"
     ngeo-layertree-listenersexpr="layertreeCtrl.listenersExpr">
   </li>
 </ul>

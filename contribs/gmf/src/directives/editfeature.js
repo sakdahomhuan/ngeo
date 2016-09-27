@@ -175,11 +175,10 @@ gmf.EditfeatureController = function($element, $scope, $timeout, $q,
   this.vectorLayer;
 
   /**
-   * @type {GmfThemesLeaf}
+   * @type {number}
    * @private
    */
-  this.editableNode_ = /** @type {GmfThemesLeaf} */ (
-    this.editableTreeCtrl.node);
+  this.editableNodeId_ = this.editableTreeCtrl.initialConfig.id;
 
 
   var layer = gmf.SyncLayertreeMap.getLayer(this.editableTreeCtrl);
@@ -467,7 +466,7 @@ gmf.EditfeatureController = function($element, $scope, $timeout, $q,
    */
   this.geomType = null;
 
-  gmfXSDAttributes.getAttributes(this.editableNode_.id).then(
+  gmfXSDAttributes.getAttributes(this.editableNodeId_).then(
     this.setAttributes_.bind(this));
 
   var uid = goog.getUid(this);
@@ -509,14 +508,14 @@ gmf.EditfeatureController.prototype.save = function() {
 
   if (id) {
     this.editFeatureService_.updateFeature(
-      this.editableNode_.id,
+      this.editableNodeId_,
       feature
     ).then(
       this.handleEditFeature_.bind(this)
     );
   } else {
     this.editFeatureService_.insertFeatures(
-      this.editableNode_.id,
+      this.editableNodeId_,
       [feature]
     ).then(
       this.handleEditFeature_.bind(this)
@@ -598,7 +597,7 @@ gmf.EditfeatureController.prototype.delete = function() {
 
     // (1) Launch request
     this.editFeatureService_.deleteFeature(
-      this.editableNode_.id,
+      this.editableNodeId_,
       this.feature
     ).then(
       this.handleDeleteFeature_.bind(this)
@@ -828,7 +827,7 @@ gmf.EditfeatureController.prototype.handleMapClick_ = function(evt) {
     );
 
     // (3) Launch query to fetch features
-    this.editFeatureService_.getFeatures([this.editableNode_.id], extent).then(
+    this.editFeatureService_.getFeatures([this.editableNodeId_], extent).then(
       this.handleGetFeatures_.bind(this));
 
     // (4) Clear any previously selected feature

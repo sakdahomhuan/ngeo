@@ -110,7 +110,7 @@ describe('gmf.SyncLayertreeMap', function() {
     var treeLeaf = treeGroup.children[0]; // osm scale;
     var wmsParamLayers = treeLeaf.layer.getSource().getParams()['LAYERS'];
 
-    expect(treeLeaf.node.name).toEqual(wmsParamLayers);
+    expect(treeLeaf.initialConfig.name).toEqual(wmsParamLayers);
   });
 
   it('Create WMS Layer in a not mixed group', function() {
@@ -146,7 +146,7 @@ describe('gmf.SyncLayertreeMap', function() {
     var treeGroup = roottreeCtrl.children[0]; // Group 'Cadastre'
     var treeLeaf = treeGroup.children[4]; // Leaf 'ch.are.alpenkonvention'
 
-    expect(treeLeaf.node.name).toBe(treeLeaf.layer.getSource().getLayer());
+    expect(treeLeaf.initialConfig.name).toBe(treeLeaf.layer.getSource().getLayer());
   });
 
   // ================== Sync ================

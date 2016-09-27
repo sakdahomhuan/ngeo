@@ -237,8 +237,8 @@ gmf.TreeManager.prototype.addGroups = function(groups, opt_add, opt_silent,
  */
 gmf.TreeManager.prototype.updateTreeGroupsState_ = function(groups) {
   var treeGroupsParam = {};
-  treeGroupsParam[gmf.PermalinkParam.TREE_GROUPS] = groups.map(function(node) {
-    return node.name;
+  treeGroupsParam[gmf.PermalinkParam.TREE_GROUPS] = groups.map(function(initialConfig) {
+    return initialConfig.name;
   }).join(',');
   this.ngeoStateManager_.updateState(treeGroupsParam);
 };
@@ -272,7 +272,7 @@ gmf.TreeManager.prototype.addGroup_ = function(group) {
  * The same as `addGroups`, with the exception that the given group will be
  * deep cloned. Only the clone will be added to the tree.
  * @param{Array.<GmfThemesGroup>} groups An array of object defining
- *     a theme node and an array of layer names to override.
+ *     a theme initialConfig and an array of layer names to override.
  * @param{boolean=} opt_add if true, force to use the 'add' mode this time.
  * @param{number=} opt_totalGroupsLength length of all group to add for this
     action.
@@ -287,7 +287,7 @@ gmf.TreeManager.prototype.addCustomGroups = function(groups, opt_add,
     this.tree.children.length = 0;
   }
   groups.forEach(function(group) {
-    var clone = this.cloneGroupNode_(group.node, group.layers);
+    var clone = this.cloneGroupNode_(group.initialConfig, group.layers);
     if (!this.addGroup_(clone)) {
       groupNotAdded.push(clone);
     }
@@ -366,7 +366,7 @@ gmf.TreeManager.prototype.addGroupByLayerName = function(layerName, opt_add,
           }
           // Search the tree.
           treeCtrls.some(function(item) {
-            if (item.node.name === layerName) {
+            if (item.initialConfig.name === layerName) {
               return treeCtrlToActive = item;
             }
           });
@@ -434,20 +434,20 @@ gmf.TreeManager.prototype.cloneGroupNode_ = function(group, names) {
 /**
  * Set the child nodes metadata `isChecked` if its name is among the list of
  * given names. If a child node also has children, check those instead.
- * @param {GmfThemesGroup|GmfThemesLeaf} node The original node.
+ * @param {GmfThemesGroup|GmfThemesLeaf} initialConfig The original initialConfig.
  * @param {Array.<string>} names Array of node names to check (i.e. that
  *     should have their checkbox checked)
  * @export
  */
-gmf.TreeManager.prototype.toggleNodeCheck_ = function(node, names) {
-  if (!node.children) {
+gmf.TreeManager.prototype.toggleNodeCheck_ = function(initialConfig, names) {
+  if (!initialConfig.children) {
     return;
   }
-  node.children.forEach(function(childNode) {
-    if (childNode.children) {
-      this.toggleNodeCheck_(childNode, names);
-    } else if (childNode.metadata) {
-      childNode.metadata['isChecked'] = ol.array.includes(names, childNode.name);
+  initialConfig.children.forEach(function(childInitialConfig) {
+    if (childInitialConfig.children) {
+      this.toggleNodeCheck_(childInitialConfig, names);
+    } else if (childInitialConfig.metadata) {
+      childInitialConfig.metadata['isChecked'] = ol.array.includes(names, childInitialConfig.name);
     }
   }, this);
 };
@@ -521,7 +521,7 @@ gmf.TreeManager.prototype.removeTreeCtrlReference = function(treeCtrl) {
 gmf.TreeManager.prototype.getTreeCtrlByNodeId = function(id) {
   var correspondingTreeCtrl = null;
   this.treeCtrlReferences_.some(function(treeCtrl) {
-    if (treeCtrl.node.id === id) {
+    if (treeCtrl.initialConfig.id === id) {
       return correspondingTreeCtrl = treeCtrl;
     }
   }, this);

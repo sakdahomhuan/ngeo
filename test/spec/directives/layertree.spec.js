@@ -129,8 +129,8 @@ describe('ngeo.layertreeDirective', function() {
     var treeNode0 = roottreeCtrl.children[0];
     var treeLeaf01 = treeNode0.children[1];
     var treeLeaf1 = roottreeCtrl.children[1];
-    expect(ngeo.LayertreeController.getFirstParentTree(treeLeaf01).node.name).toBe(treeNode0.node.name);
-    expect(ngeo.LayertreeController.getFirstParentTree(treeLeaf1).node.name).toBe(treeLeaf1.node.name);
+    expect(ngeo.LayertreeController.getFirstParentTree(treeLeaf01).initialConfig.name).toBe(treeNode0.initialConfig.name);
+    expect(ngeo.LayertreeController.getFirstParentTree(treeLeaf1).initialConfig.name).toBe(treeLeaf1.initialConfig.name);
   });
 
   it('Get flat tree', function() {
@@ -144,7 +144,7 @@ describe('ngeo.layertreeDirective', function() {
     flatTree.length = 0;
     ngeo.LayertreeController.getFlatTree(roottreeCtrl, flatTree, true);
     expect(flatTree.length).toBe(5);
-    expect(flatTree[0].node.name).toBe(treeLeaf00.node.name);
-    expect(flatTree[4].node.name).toBe(roottreeCtrl.node.name);
+    expect(flatTree[0].initialConfig.name).toBe(treeLeaf00.initialConfig.name);
+    expect(flatTree[4].initialConfig.name).toBe(roottreeCtrl.initialConfig.name);
   });
 });

@@ -79,10 +79,10 @@ app.MainController = function($timeout, gmfThemes, gmfXSDAttributes) {
         this.getDistinctFlatNodes_(group, flatNodes);
       }.bind(this));
     }.bind(this));
-    flatNodes.forEach(function(node) {
+    flatNodes.forEach(function(initialConfig) {
       // Get an array of all layers
-      if (node.children === undefined && layerNames.indexOf(node.name) !== -1) {
-        this.layers.push(node);
+      if (initialConfig.children === undefined && layerNames.indexOf(initialConfig.name) !== -1) {
+        this.layers.push(initialConfig);
       }
     }.bind(this));
 
@@ -142,26 +142,26 @@ app.MainController.prototype.getGeomType = function() {
 
 /**
  * Just for this example
- * @param {GmfThemesNode} node A theme, group or layer node.
- * @param {Array.<GmfThemesNode>} nodes An Array of nodes.
+ * @param {GmfThemesNode} initialConfig A theme, group or layer initialConfig.
+ * @param {Array.<GmfThemesNode>} initialConfigs An Array of initialConfigs.
  * @export
  */
-app.MainController.prototype.getDistinctFlatNodes_ = function(node, nodes) {
+app.MainController.prototype.getDistinctFlatNodes_ = function(initialConfig, initialConfigs) {
   var i;
-  var children = node.children;
+  var children = initialConfig.children;
   if (children !== undefined) {
     for (i = 0; i < children.length; i++) {
-      this.getDistinctFlatNodes_(children[i], nodes);
+      this.getDistinctFlatNodes_(children[i], initialConfigs);
     }
   }
   var alreadyAdded = false;
-  nodes.some(function(n) {
-    if (n.id === node.id) {
+  initialConfigs.some(function(n) {
+    if (n.id === initialConfig.id) {
       return alreadyAdded = true;
     }
   });
   if (!alreadyAdded) {
-    nodes.push(node);
+    initialConfigs.push(initialConfig);
   }
 };
 
