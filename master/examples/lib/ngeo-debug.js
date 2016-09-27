@@ -99490,7 +99490,7 @@ ngeo.measureareaDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing area');
+      var helpMsg = gettext('Click to start drawing polygon');
       var contMsg = gettext('Click to continue drawing<br/>' +
           'Double-click or click starting point to finish');
 
@@ -99556,7 +99556,7 @@ ngeo.measureazimutDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing azimut');
+      var helpMsg = gettext('Click to start drawing circle');
       var contMsg = gettext('Click to finish');
 
       var measureAzimut = new ngeo.interaction.MeasureAzimut($filter('ngeoUnitPrefix'), {
@@ -99639,7 +99639,7 @@ ngeo.measurelengthDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing length');
+      var helpMsg = gettext('Click to start drawing line');
       var contMsg = gettext('Click to continue drawing<br/>' +
                             'Double-click or click last point to finish');
 
