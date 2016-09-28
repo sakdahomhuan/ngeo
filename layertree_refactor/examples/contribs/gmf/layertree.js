@@ -174,8 +174,6 @@ app.MainController = function(gmfThemes, gmfTreeManager, ngeoLocation) {
         }
       }.bind(this));
 
-      //set arbitrarily a default theme
-      this.gmfTreeManager.addTheme(themes[0]);
       this.treeSource = this.gmfTreeManager.tree;
     }
   }.bind(this));
