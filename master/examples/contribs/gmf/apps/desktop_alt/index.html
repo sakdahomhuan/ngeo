@@ -242,7 +242,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = 'c5cf6c55e69de2fd8812433f102f5b678580a1a7';
+        var cacheVersion = '14ed9fadd837850a3a6d7e59f26367bebe23230d';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
@@ -281,7 +281,7 @@
                 {action: 'add_layer', title: 'Add a layer'}
         ]);
         module.constant('gmfTreeManagerModeFlush', false);
-        module.value('gmfPermalinkOptions', {projectionCodes: ['EPSG:21781', 'EPSG:2056', 'EPSG:4326']});
+        module.value('gmfPermalinkOptions', {projectionCodes: ['EPSG:21781', 'EPSG:2056', 'EPSG:4326'], useLocalStorage: false});
         module.value('ngeoWfsPermalinkOptions',
             /** @type {ngeox.WfsPermalinkOptions} */ ({
               url: 'https://geomapfish-demo.camptocamp.net/2.1/wsgi/mapserv_proxy',
