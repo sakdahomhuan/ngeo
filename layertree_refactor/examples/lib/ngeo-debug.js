@@ -101268,7 +101268,7 @@ ngeo.LayertreeController.prototype.refreshState = function() {
  * @export
  */
 ngeo.LayertreeController.prototype.getCalculateState = function() {
-  if (this.children.length === 0) {
+  if (this.node.children === undefined) {
     return this.state_;
   }
   var childState;
