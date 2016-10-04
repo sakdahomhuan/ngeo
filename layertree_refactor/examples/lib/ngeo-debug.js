@@ -84232,38 +84232,6 @@ ngeo.LayerHelper.prototype.getFlatLayers_ = function(layer, array) {
 
 
 /**
- * Get an array of all group and layer in a group. The group can contain
- * multiple levels of others groups. It will include itself.
- * @param {ol.layer.Group} group The base group of layers
- * @return {Array.<ol.layer.Group|ol.layer.Base>} .
- * @export
- */
-ngeo.LayerHelper.prototype.getFlatMapElements = function(group) {
-  return this.getFlatMapElements_(group, []);
-};
-
-
-/**
- * Get an array of all layers and group in a group. The group can contain
- * multiple levels of others groups.
- * @param {ol.layer.Group|ol.layer.Base} element A group or a layer.
- * @param {Array.<ol.layer.Group|ol.layer.Base>} array An array to add elements.
- * @return {Array.<ol.layer.Group|ol.layer.Base>} Elements.
- * @private
- */
-ngeo.LayerHelper.prototype.getFlatMapElements_ = function(element, array) {
-  if (element instanceof ol.layer.Group) {
-    var groupArray = element.getLayers().getArray();
-    groupArray.forEach(function(e) {
-      this.getFlatMapElements_(e, array);
-    }, this);
-  }
-  array.push(element);
-  return array;
-};
-
-
-/**
  * Get a layer that has a `layerName` property equal to a given layer name from
  * an array of layers. If one of the layers in the array is a group, then the
  * layers contained in that group are searched as well.
