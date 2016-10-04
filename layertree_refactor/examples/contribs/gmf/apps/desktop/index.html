@@ -21,8 +21,8 @@
               data-toggle="dropdown">
               <span class="fa fa-grid"></span>
               <span translate>Theme:</span>
-              <b ng-if="!mainCtrl.theme.name" translate>Loading...</b>
-              <b ng-if="mainCtrl.theme.name">{{mainCtrl.theme.name|translate}}</b>
+              <b ng-if="!mainCtrl.gmfThemeManager.themeName" translate>Loading...</b>
+              <b ng-if="mainCtrl.gmfThemeManager.themeName">{{mainCtrl.gmfThemeManager.themeName|translate}}</b>
               <span class="caret"></span>
             </a>
             <gmf-themeselector class="dropdown-menu"
@@ -239,7 +239,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = '437d966832267c2f91238ca639199fcb5dad23a0';
+        var cacheVersion = 'aaf1ebc830e340e58cf92853567974cc2755dd7a';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);

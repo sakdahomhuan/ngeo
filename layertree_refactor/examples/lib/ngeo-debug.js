@@ -101163,8 +101163,15 @@ ngeo.LayertreeController = function($scope, $rootScope, $attrs, ngeoDecorateLaye
   if (this.layer) {
     ngeoDecorateLayerLoading(this.layer, $scope);
     ngeoDecorateLayer(this.layer);
-  }
 
+    ol.events.listen(
+      this.layer,
+      ol.Object.getChangeEventType(ol.layer.LayerProperty.OPACITY),
+      function(evt) {
+        this.rootScope_.$broadcast('ngeo-layertree-opacity', this);
+      }, this
+    );
+  }
 
   var listenersExpr = $attrs['ngeoLayertreeListeners'];
   if (listenersExpr === undefined) {
@@ -101201,39 +101208,40 @@ ngeo.LayertreeController.prototype.getState = function() {
  * Set the state of this treeCtrl. Update its children with its value and then
  * ask its parent to refresh its state.
  * @param {string} state 'on' or 'off'.
- * @param {boolean=} opt_avoidRefreshParents True to avoid refreshing its
- * parent.
+ * @param {boolean=} opt_broadcast Broadcast.
  * @export
  */
-ngeo.LayertreeController.prototype.setState = function(state, opt_avoidRefreshParents) {
+ngeo.LayertreeController.prototype.setState = function(state, opt_broadcast) {
   if (state === this.state_) {
     return;
   }
   this.setStateInternal_(state);
+
+  // Ask to its parent to update it's state.
+  if (this.parent) {
+    this.parent.refreshState();
+  }
+
   var firstParents = this.isRoot ? this.children : [ngeo.LayertreeController.getFirstParentTree(this)];
 
-  firstParents.forEach(function(firstParent) {
-    // FIXME: get rid of this.map
-    this.rootScope_.$broadcast('ngeo-layertree-state', this.map, this, firstParent);
-  }.bind(this));
+  if (opt_broadcast === undefined || opt_broadcast) {
+    firstParents.forEach(function(firstParent) {
+      this.rootScope_.$broadcast('ngeo-layertree-state', this, firstParent);
+    }.bind(this));
+  }
 };
 
 
 /**
  * @param {string} state 'on' or 'off'.
- * @param {boolean=} opt_avoidRefreshParents True to avoid refreshing its parent.
  */
-ngeo.LayertreeController.prototype.setStateInternal_ = function(state, opt_avoidRefreshParents) {
+ngeo.LayertreeController.prototype.setStateInternal_ = function(state) {
   // Set the state
   this.state_ = state === 'on' ? 'on' : 'off';
   // Asks to each child to set its state;
   this.children.forEach(function(child) {
-    child.setStateInternal_(this.state_, true);
+    child.setStateInternal_(this.state_);
   }, this);
-  // Ask to its parent to update it's state.
-  if (!opt_avoidRefreshParents && this.parent) {
-    this.parent.refreshState();
-  }
 };
 
 
@@ -101314,29 +101322,6 @@ ngeo.LayertreeController.getFirstParentTree = function(treeCtrl) {
     tree = tree.parent;
   }
   return tree;
-};
-
-
-/**
- * Fill the given array with all layertree objects of any level from the
- * children of the given layertree. By default, include onyl all leaves.
- * @param {ngeo.LayertreeController} treeCtrl ngeo layertree controller.
- * @param {Array.<ngeo.LayertreeController>} treeCtrls array that will contains
- *     the ngeo layertree controller.
- * @param {boolean=} opt_includeGroups If true, include leaves and groups.
- * @public
- */
-ngeo.LayertreeController.getFlatTree = function(treeCtrl, treeCtrls,
-    opt_includeGroups) {
-  var children = treeCtrl.children;
-  if (children.length > 0) {
-    children.forEach(function(child) {
-      ngeo.LayertreeController.getFlatTree(child, treeCtrls, opt_includeGroups);
-    });
-  }
-  if (children.length <= 0 || opt_includeGroups === true) {
-    treeCtrls.push(treeCtrl);
-  }
 };
 
 
