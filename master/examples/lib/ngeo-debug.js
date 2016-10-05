@@ -83029,6 +83029,7 @@ goog.require('goog.object');
  *     ]
  *
  * @constructor
+ * @struct
  * @return {Object} D3js component.
  * @param {ngeox.profile.ProfileOptions} options Profile options.
  * @export
@@ -83745,6 +83746,7 @@ goog.require('ngeo');
  * - events from Closure Library
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoEventHelper
  * @ngInject
@@ -83883,6 +83885,7 @@ ngeo.module.directive('ngeoAttributes', ngeo.attributesDirective);
  * @param {!angular.Scope} $scope Angular scope.
  * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoAttributesController
@@ -84028,6 +84031,7 @@ goog.require('ol.source.WMTS');
  * @param {angular.$q} $q Angular promises/deferred service.
  * @param {angular.$http} $http Angular http service.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoLayerHelper
  * @ngInject
@@ -85498,6 +85502,7 @@ ngeo.module.value('ngeoQueryResult', /** @type {ngeox.QueryResult} */ ({
  * `ngeox.QuerySource`
  *
  * @constructor
+ * @struct
  * @param {angular.$http} $http Angular $http service.
  * @param {angular.$q} $q The Angular $q service.
  * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
@@ -86393,6 +86398,7 @@ ngeo.module.directive('ngeoBtnGroup', ngeo.btngroupDirective);
 /**
  * @param {!angular.Scope} $scope Scope.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoBtnGroupController
@@ -86568,6 +86574,7 @@ var defaultColors = [
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope Directive scope.
  * @param {angular.JQLite} $element Element.
  * @param {angular.Attributes} $attrs Attributes.
@@ -95771,6 +95778,7 @@ ngeo.MeasureEventType = {
  * instances of this type.
  *
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @implements {ngeox.MeasureEvent}
  * @param {ngeo.MeasureEventType} type Type.
@@ -95795,6 +95803,7 @@ ol.inherits(ngeo.MeasureEvent, ol.events.Event);
  * Interaction that allows measuring (length, area, ...).
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Interaction}
  * @param {ngeo.interaction.MeasureBaseOptions=} opt_options Options
  */
@@ -96269,6 +96278,7 @@ goog.require('ol.interaction.Draw');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -96348,6 +96358,7 @@ goog.require('ol.interaction.Draw');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -96487,6 +96498,7 @@ ngeo.module.directive('ngeoCreatefeature', ngeo.createfeatureDirective);
  * @param {angular.$timeout} $timeout Angular timeout service.
  * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoCreatefeatureController
@@ -96665,6 +96677,7 @@ goog.require('ngeo');
 /**
  * ngeo - Time service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc service
  * @ngname ngeoTime
@@ -96813,6 +96826,7 @@ ngeo.module.directive('ngeoDatePicker', ngeo.DatePicker);
  * @param {angular.$injector} $injector injector.
  * @param {ngeo.Time} ngeoTime time service.
  * @constructor
+ * @struct
  * @export
  * @ngInject
  * @ngdoc controller
@@ -96845,7 +96859,7 @@ ngeo.DatePickerController = function($scope, $injector, ngeoTime) {
 
   /**
    * If the component is used to select a date range
-   * @type boolean
+   * @type {boolean}
    * @export
    */
   this.isModeRange = this.time.mode === 'range';
@@ -96853,7 +96867,7 @@ ngeo.DatePickerController = function($scope, $injector, ngeoTime) {
 
   /**
    * Function called after date(s) changed/selected
-   * @function
+   * @type {function({time: {start: number, end: number}})}
    * @export
    */
   this.onDateSelected;
@@ -97019,6 +97033,7 @@ ngeo.FeatureOverlayGroup;
  *     featureOverlay.addFeature(myFeature);
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoFeatureOverlayMgr
  */
@@ -97318,6 +97333,7 @@ ngeo.MessageType = {
  * Abstract class for services that display messages.
  *
  * @constructor
+ * @struct
  */
 ngeo.Message = function() {};
 
@@ -97446,6 +97462,7 @@ goog.require('ngeo.Message');
  * properly.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.Message}
  * @param {angular.$timeout} $timeout Angular timeout service.
  * @ngdoc service
@@ -97670,6 +97687,7 @@ ngeo.module.directive('ngeoDesktopGeolocation',
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope The directive's scope.
  * @param {angular.JQLite} $element Element.
  * @param {ngeo.DecorateGeolocation} ngeoDecorateGeolocation Decorate
@@ -97912,6 +97930,7 @@ goog.require('ol.source.Vector');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @fires ol.interaction.DrawEvent
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
@@ -98020,6 +98039,7 @@ ngeo.interaction.MeasureAzimut.getAzimut = function(line) {
  * Interaction dedicated to measure azimut.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.PointerOptions} options Options.
  * @export
@@ -98382,6 +98402,7 @@ goog.require('ol.style.Text');
  *  - export
  *
  * @constructor
+ * @struct
  * @param {angular.$injector} $injector Main injector.
  * @param {angular.$filter} $filter Angular filter
  * @ngdoc service
@@ -99790,6 +99811,7 @@ ngeo.module.directive('ngeoDrawfeature', ngeo.drawfeatureDirective);
  * @param {ngeo.FeatureHelper} ngeoFeatureHelper Ngeo feature helper service.
  * @param {ol.Collection.<ol.Feature>} ngeoFeatures Collection of features.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoDrawfeatureController
@@ -100034,6 +100056,7 @@ ngeo.module.directive('ngeoExportfeatures', ngeo.exportfeaturesDirective);
  * @param {!angular.Scope} $scope Angular scope.
  * @param {ngeo.FeatureHelper} ngeoFeatureHelper Ngeo feature helper service.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoExportfeaturesController
@@ -100293,6 +100316,7 @@ ngeo.module.value('ngeoGridTemplateUrl',
  * @param {Array.<Object>|undefined} data Entries/objects to be shown in a grid.
  * @param {Array.<ngeox.GridColumnDef>|undefined} columnDefs Column definition of a grid.
  * @constructor
+ * @struct
  * @export
  */
 ngeo.GridConfig = function(data, columnDefs) {
@@ -100457,6 +100481,7 @@ ngeo.module.directive('ngeoGrid', ngeo.gridDirective);
 /**
  * @param {!angular.Scope} $scope Angular scope.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoGridController
@@ -101543,6 +101568,7 @@ ngeo.module.directive('ngeoMobileGeolocation', ngeo.mobileGeolocationDirective);
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope The directive's scope.
  * @param {angular.JQLite} $element Element.
  * @param {ngeo.DecorateGeolocation} ngeoDecorateGeolocation Decorate
@@ -101981,6 +102007,7 @@ ngeo.popoverContentDirective = function() {
 /**
  * The controller for the 'popover' directive.
  * @constructor
+ * @struct
  * @ngInject
  * @export
  * @ngdoc controller
@@ -106000,6 +106027,7 @@ ngeo.module.directive('ngeoScaleselector', ngeo.scaleselectorDirective);
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope Directive scope.
  * @param {angular.JQLite} $element Element.
  * @param {angular.Attributes} $attrs Attributes.
@@ -113995,6 +114023,7 @@ ngeo.format.FeatureHashLegacyProperties_ = {};
  *
  * @see https://github.com/sbrunner/OpenLayers-URLCompressed
  * @constructor
+ * @struct
  * @extends {ol.format.TextFeature}
  * @param {ngeox.format.FeatureHashOptions=} opt_options Options.
  * @export
@@ -115147,6 +115176,7 @@ goog.require('ol.format.XML');
  * Reads attributes that are defined in XSD format and return them as a list.
  *
  * @constructor
+ * @struct
  * @extends {ol.format.XML}
  * @export
  */
@@ -115351,6 +115381,7 @@ ngeo.interaction.MobileDrawProperty = {
  * - line string
  *
  * @constructor
+ * @struct
  * @fires ol.interaction.DrawEvent
  * @extends {ol.interaction.Interaction}
  * @param {ngeox.interaction.MobileDrawOptions} options Options
@@ -115805,6 +115836,7 @@ goog.require('ngeo.interaction.MobileDraw');
  * Interaction dedicated to measure length on mobile devices.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.MeasureLength}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -115847,6 +115879,7 @@ goog.require('ol.geom.Point');
  * Interaction dedicated to measure by coordinate (point) on mobile devices.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
  * @export
@@ -115920,6 +115953,7 @@ goog.require('ol.style.Style');
  * Interaction for modifying feature geometries.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -116410,6 +116444,7 @@ goog.require('ol.source.Vector');
  * Interaction for modifying feature geometries.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -116829,6 +116864,7 @@ goog.require('ol.interaction.Modify');
  * never share the same feature, they don't collide with one an other.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Interaction}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @export
@@ -117069,6 +117105,7 @@ ngeo.RotateEventType = {
  * instances of this type.
  *
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @implements {ngeox.RotateEvent}
  * @param {ngeo.RotateEventType} type Type.
@@ -117094,6 +117131,7 @@ ol.inherits(ngeo.RotateEvent, ol.events.Event);
  * Interaction to rotate features.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -117881,6 +117919,7 @@ goog.require('ol.source.Vector');
  * - pressing the ESC key automatically deactivate the interaction.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Translate}
  * @param {ngeox.interaction.TranslateOptions} options Options.
  * @export
@@ -118608,6 +118647,7 @@ goog.require('ol.proj');
 
 /**
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoAutoProjection
  */
@@ -118744,6 +118784,7 @@ ngeo.BackgroundEventType = {
 
 /**
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @param {ngeo.BackgroundEventType} type Type.
  * @param {ol.layer.Base} previous Previous background layer.
@@ -118802,6 +118843,7 @@ ol.inherits(ngeo.BackgroundEvent, ol.events.Event);
  *
  * @extends {ol.Observable}
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoBackgroundLayerMgr
  */
@@ -119029,6 +119071,7 @@ goog.require('ngeo.Download');
  * @param {angular.$injector} $injector Main injector.
  * @param {angularGettext.Catalog} gettextCatalog Gettext service.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoCsvDownload
  * @ngInject
@@ -119189,6 +119232,7 @@ ngeo.CreatePopup;
  *     popup.setOpen(true);
  *
  * @constructor
+ * @struct
  * @param {angular.$compile} $compile The compile provider.
  * @param {angular.Scope} $rootScope The rootScope provider.
  * @param {angular.$sce} $sce Angular sce service.
@@ -119448,6 +119492,7 @@ goog.require('ngeo.Message');
  * @param {angularGettext.Catalog} gettextCatalog Gettext service.
  * @param {ngeo.CreatePopup} ngeoCreatePopup Popup service.
  * @constructor
+ * @struct
  * @extends {ngeo.Message}
  * @ngdoc service
  * @ngname ngeoDisclaimer
@@ -123376,6 +123421,7 @@ ngeo.MockLocationProvider;
  * @param {Location} location Location.
  * @param {History} history History.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoLocation
  */
@@ -124346,6 +124392,7 @@ ngeo.PrintStyleTypes_[ol.geom.GeometryType.MULTI_POLYGON] =
  *   as MapFish Print does not support sprite icons.
  *
  * @constructor
+ * @struct
  * @param {string} url URL to MapFish print web service.
  * @param {angular.$http} $http Angular $http service.
  * @param {ngeo.LayerHelper} ngeoLayerHelper Ngeo Layer Helper service.
@@ -125150,10 +125197,24 @@ goog.require('ngeo');
  * Provides a service with print utility functions.
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoPrintUtils
  */
 ngeo.PrintUtils = function() {
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.extentHalfHorizontalDistance_;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.extentHalfVerticalDistance_;
+
 };
 
 
@@ -125826,6 +125887,7 @@ goog.require('ngeo.Location');
  * Provides a service for managing the application state.
  * The application state is written to both the URL and the local storage.
  * @constructor
+ * @struct
  * @param {ngeo.Location} ngeoLocation ngeo location service.
  * @ngInject
  */
@@ -126095,6 +126157,7 @@ goog.require('ngeo');
  * @param {string} activePropertyName The name of a boolean property on
  *      `toolContext` which represents the active state of the tool.
  * @constructor
+ * @struct
  * @ngdoc value
  * @ngname ngeoToolActivate
  * @export
@@ -126157,6 +126220,7 @@ ngeo.ToolMgrEntry;
  *
  * @param {angular.Scope} $rootScope The rootScope provider.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoToolActivateMgr
  * @ngInject
@@ -126405,6 +126469,7 @@ ngeo.module.value('ngeoWfsPermalinkOptions',
  * parcels #78 and 90 of the city of Paris.
  *
  * @constructor
+ * @struct
  * @param {angular.$http} $http Angular $http service.
  * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
  * @param {ngeox.WfsPermalinkOptions} ngeoWfsPermalinkOptions The options to
