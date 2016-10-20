@@ -265,15 +265,18 @@ ngeo.profile = function(options) {
 
       // Select the svg element, if it exists.
       svg = d3.select(this).selectAll('svg').data([data]);
-
       // Otherwise, create the skeletal chart.
       var svgEnter = svg.enter().append('svg');
+      // Then select it again to get the complete object.
+      svg = d3.select(this).selectAll('svg').data([data]);
+
       if (styleDefs !== undefined) {
         svgEnter.append('defs').append('style')
           .attr('type', 'text/css')
           .text(styleDefs);
       }
       var gEnter = svgEnter.append('g');
+
       clearPois();
 
       gEnter.style('font', '11px Arial');
@@ -391,7 +394,7 @@ ngeo.profile = function(options) {
         yHover.append('text');
 
         // Configure the d3 line.
-        line = d3.svg.line()
+        line = d3.line()
             .x(function(d) {
               return x(distanceExtractor(d));
             })
@@ -455,6 +458,9 @@ ngeo.profile = function(options) {
           .style('fill', 'none')
           .style('stroke', '#000')
           .style('shape-rendering', 'crispEdges');
+
+      g.select('.grid-y').select('path')
+          .style('stroke', 'none');
 
       g.selectAll('.grid-hover line')
           .style('stroke', '#222')
@@ -587,13 +593,13 @@ ngeo.profile = function(options) {
     poiEnterG.append('line')
       .style('shape-rendering', 'crispEdges');
 
-    p.style('opacity', 0)
+    poiEnterG.style('opacity', 0)
       .transition()
       .duration(1000)
       .delay(100)
       .style('opacity', 1);
 
-    p.selectAll('text')
+    poiEnterG.selectAll('text')
       .attr('transform', function(d) {
         if (light) {
           return ['translate(',
@@ -611,7 +617,7 @@ ngeo.profile = function(options) {
         return pe.sort(d) + (light ? '' : (' - ' + pe.title(d)));
       });
 
-    p.selectAll('line')
+    poiEnterG.selectAll('line')
        .style('stroke', 'grey')
        .attr('x1', function(d) {
          return x(pe.dist(d));
@@ -627,7 +633,7 @@ ngeo.profile = function(options) {
        });
 
     // remove unused pois
-    p.exit().remove();
+    poiEnterG.exit().remove();
   };
 
   function clearPois() {

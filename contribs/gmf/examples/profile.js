@@ -1,6 +1,8 @@
 goog.provide('gmf-profile');
 
 goog.require('ngeo.FeatureOverlayMgr');
+goog.require('gmf.Permalink');
+goog.require('gmf.Snapping');
 goog.require('gmf.mapDirective');
 goog.require('gmf.profileDirective');
 goog.require('ngeo.proj.EPSG21781');
