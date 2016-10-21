@@ -83029,6 +83029,7 @@ goog.require('goog.object');
  *     ]
  *
  * @constructor
+ * @struct
  * @return {Object} D3js component.
  * @param {ngeox.profile.ProfileOptions} options Profile options.
  * @export
@@ -83745,6 +83746,7 @@ goog.require('ngeo');
  * - events from Closure Library
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoEventHelper
  * @ngInject
@@ -83883,6 +83885,7 @@ ngeo.module.directive('ngeoAttributes', ngeo.attributesDirective);
  * @param {!angular.Scope} $scope Angular scope.
  * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoAttributesController
@@ -84028,6 +84031,7 @@ goog.require('ol.source.WMTS');
  * @param {angular.$q} $q Angular promises/deferred service.
  * @param {angular.$http} $http Angular http service.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoLayerHelper
  * @ngInject
@@ -84074,6 +84078,7 @@ ngeo.LayerHelper.REFRESH_PARAM = 'random';
  */
 ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
     sourceLayersName, opt_serverType, opt_time, opt_params) {
+
   var params = {'LAYERS': sourceLayersName};
   var olServerType;
   if (opt_time) {
@@ -84123,7 +84128,7 @@ ngeo.LayerHelper.prototype.createWMTSLayerFromCapabilitites = function(capabilit
     if (response.data) {
       result = parser.read(response.data);
     }
-    if (result !== undefined) {
+    if (result) {
       var options = ol.source.WMTS.optionsFromCapabilities(result, {
         layer: layerName
       });
@@ -84259,7 +84264,7 @@ ngeo.LayerHelper.prototype.getLayerByName = function(layerName, layers) {
  * Get the WMTS legend URL for the given layer.
  * @param {ol.layer.Tile} layer Tile layer as returned by the
  * ngeo layerHelper service.
- * @return {?string} The legend URL or null.
+ * @return {string|undefined} The legend URL or undefined.
  * @export
  */
 ngeo.LayerHelper.prototype.getWMTSLegendURL = function(layer) {
@@ -84272,7 +84277,7 @@ ngeo.LayerHelper.prototype.getWMTSLegendURL = function(layer) {
       url = legendURL[0]['href'];
     }
   }
-  return url || null;
+  return url;
 };
 
 
@@ -84280,23 +84285,25 @@ ngeo.LayerHelper.prototype.getWMTSLegendURL = function(layer) {
  * Get the WMS legend URL for the given node.
  * @param {string} url The base url of the wms service.
  * @param {string} layerName The name of a wms layer.
- * @param {number} scale A scale.
+ * @param {number=} opt_scale A scale.
  * @param {string=} opt_legendRule rule parameters to add to the returned URL.
- * @return {?string} The legend URL or null.
+ * @return {string|undefined} The legend URL or undefined.
  * @export
  */
 ngeo.LayerHelper.prototype.getWMSLegendURL = function(url,
-    layerName, scale, opt_legendRule) {
+    layerName, opt_scale, opt_legendRule) {
   if (!url) {
-    return null;
+    return undefined;
   }
   url = goog.uri.utils.setParam(url, 'FORMAT', 'image/png');
   url = goog.uri.utils.setParam(url, 'TRANSPARENT', true);
-  url = goog.uri.utils.setParam(url, 'SERVICE', 'wms');
+  url = goog.uri.utils.setParam(url, 'SERVICE', 'WMS');
   url = goog.uri.utils.setParam(url, 'VERSION', '1.1.1');
   url = goog.uri.utils.setParam(url, 'REQUEST', 'GetLegendGraphic');
   url = goog.uri.utils.setParam(url, 'LAYER', layerName);
-  url = goog.uri.utils.setParam(url, 'SCALE', scale);
+  if (opt_scale !== undefined) {
+    url = goog.uri.utils.setParam(url, 'SCALE', opt_scale);
+  }
   if (opt_legendRule !== undefined) {
     url = goog.uri.utils.setParam(url, 'RULE', opt_legendRule);
   }
@@ -85495,6 +85502,7 @@ ngeo.module.value('ngeoQueryResult', /** @type {ngeox.QueryResult} */ ({
  * `ngeox.QuerySource`
  *
  * @constructor
+ * @struct
  * @param {angular.$http} $http Angular $http service.
  * @param {angular.$q} $q The Angular $q service.
  * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
@@ -85509,6 +85517,12 @@ ngeo.Query = function($http, $q, ngeoQueryResult, ngeoQueryOptions,
     ngeoLayerHelper) {
 
   var options = ngeoQueryOptions !== undefined ? ngeoQueryOptions : {};
+
+
+  /**
+   * @type {Object.<string, string>}
+   */
+  this.dimensions = {};
 
   /**
    * @type {number}
@@ -85882,9 +85896,6 @@ ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
         }
       }
 
-      item['resultSource'].pending = true;
-      item['resultSource'].queried = true;
-
       if (item.source.wfsQuery) {
         // use WFS GetFeature
         url = item.source.urlWfs || item.source.wmsSource.getUrl();
@@ -85908,8 +85919,6 @@ ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
           this.pushSourceIfUnique_(item, wmsItemsByUrl[url]);
         } else {
           // TODO - support other kinds of infoFormats
-          item['resultSource'].pending = false;
-          item['resultSource'].queried = false;
         }
       }
     }
@@ -85957,6 +85966,12 @@ ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
   var resolution = /** @type {number} */(view.getResolution());
 
   angular.forEach(wmsItemsByUrl, function(items) {
+
+    items.forEach(function(item) {
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
+    });
+
     var infoFormat = items[0].source.infoFormat;
     var wmsGetFeatureInfoUrl = items[0].source.wmsSource.getGetFeatureInfoUrl(
         coordinate, resolution, projCode, {
@@ -85974,6 +85989,22 @@ ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
         goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'LAYERS', lyrStr);
     wmsGetFeatureInfoUrl =
         goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'QUERY_LAYERS', lyrStr);
+
+    // add dimensions values
+    var dimensions = items[0].source.dimensions;
+    if (dimensions) {
+      for (var key in dimensions) {
+        // get the value from the global dimensions
+        var value = this.dimensions[key];
+        if (value === undefined) {
+          // get the value from the layer default value
+          value = dimensions[key];
+        }
+        if (value !== undefined) {
+          wmsGetFeatureInfoUrl = goog.uri.utils.setParam(wmsGetFeatureInfoUrl, key, value);
+        }
+      }
+    }
 
     var canceler = this.registerCanceler_();
     this.$http_.get(wmsGetFeatureInfoUrl, {timeout: canceler.promise})
@@ -86027,10 +86058,11 @@ ngeo.Query.prototype.doGetFeatureRequests_ = function(
 
       if (layers.length == 0 || layers[0] === '') {
         // do not query source if no valid layers
-        item['resultSource'].pending = false;
-        item['resultSource'].queried = false;
         return;
       }
+
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
 
       /** @type{olx.format.WFSWriteGetFeatureOptions} */
       var getFeatureOptions = {
@@ -86388,6 +86420,7 @@ ngeo.module.directive('ngeoBtnGroup', ngeo.btngroupDirective);
 /**
  * @param {!angular.Scope} $scope Scope.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoBtnGroupController
@@ -86563,6 +86596,7 @@ var defaultColors = [
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope Directive scope.
  * @param {angular.JQLite} $element Element.
  * @param {angular.Attributes} $attrs Attributes.
@@ -95766,6 +95800,7 @@ ngeo.MeasureEventType = {
  * instances of this type.
  *
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @implements {ngeox.MeasureEvent}
  * @param {ngeo.MeasureEventType} type Type.
@@ -95790,6 +95825,7 @@ ol.inherits(ngeo.MeasureEvent, ol.events.Event);
  * Interaction that allows measuring (length, area, ...).
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Interaction}
  * @param {ngeo.interaction.MeasureBaseOptions=} opt_options Options
  */
@@ -96264,6 +96300,7 @@ goog.require('ol.interaction.Draw');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -96343,6 +96380,7 @@ goog.require('ol.interaction.Draw');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -96482,6 +96520,7 @@ ngeo.module.directive('ngeoCreatefeature', ngeo.createfeatureDirective);
  * @param {angular.$timeout} $timeout Angular timeout service.
  * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoCreatefeatureController
@@ -96552,7 +96591,7 @@ ngeo.CreatefeatureController = function(gettext, $compile, $filter, $scope,
     helpMsg = gettext('Click to start drawing area');
     contMsg = gettext(
       'Click to continue drawing<br/>' +
-      'Double-click or click last starting point to finish'
+      'Double-click or click starting point to finish'
     );
 
     interaction = new ngeo.interaction.MeasureArea(
@@ -96660,6 +96699,7 @@ goog.require('ngeo');
 /**
  * ngeo - Time service
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc service
  * @ngname ngeoTime
@@ -96808,6 +96848,7 @@ ngeo.module.directive('ngeoDatePicker', ngeo.DatePicker);
  * @param {angular.$injector} $injector injector.
  * @param {ngeo.Time} ngeoTime time service.
  * @constructor
+ * @struct
  * @export
  * @ngInject
  * @ngdoc controller
@@ -96840,7 +96881,7 @@ ngeo.DatePickerController = function($scope, $injector, ngeoTime) {
 
   /**
    * If the component is used to select a date range
-   * @type boolean
+   * @type {boolean}
    * @export
    */
   this.isModeRange = this.time.mode === 'range';
@@ -96848,7 +96889,7 @@ ngeo.DatePickerController = function($scope, $injector, ngeoTime) {
 
   /**
    * Function called after date(s) changed/selected
-   * @function
+   * @type {function({time: {start: number, end: number}})}
    * @export
    */
   this.onDateSelected;
@@ -97014,6 +97055,7 @@ ngeo.FeatureOverlayGroup;
  *     featureOverlay.addFeature(myFeature);
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoFeatureOverlayMgr
  */
@@ -97313,6 +97355,7 @@ ngeo.MessageType = {
  * Abstract class for services that display messages.
  *
  * @constructor
+ * @struct
  */
 ngeo.Message = function() {};
 
@@ -97441,6 +97484,7 @@ goog.require('ngeo.Message');
  * properly.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.Message}
  * @param {angular.$timeout} $timeout Angular timeout service.
  * @ngdoc service
@@ -97665,6 +97709,7 @@ ngeo.module.directive('ngeoDesktopGeolocation',
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope The directive's scope.
  * @param {angular.JQLite} $element Element.
  * @param {ngeo.DecorateGeolocation} ngeoDecorateGeolocation Decorate
@@ -97907,6 +97952,7 @@ goog.require('ol.source.Vector');
  * See our live example: {@link ../examples/measure.html}
  *
  * @constructor
+ * @struct
  * @fires ol.interaction.DrawEvent
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.unitPrefix} format The format function
@@ -98015,6 +98061,7 @@ ngeo.interaction.MeasureAzimut.getAzimut = function(line) {
  * Interaction dedicated to measure azimut.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.PointerOptions} options Options.
  * @export
@@ -98377,6 +98424,7 @@ goog.require('ol.style.Text');
  *  - export
  *
  * @constructor
+ * @struct
  * @param {angular.$injector} $injector Main injector.
  * @param {angular.$filter} $filter Angular filter
  * @ngdoc service
@@ -99486,9 +99534,9 @@ ngeo.measureareaDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing area');
+      var helpMsg = gettext('Click to start drawing polygon');
       var contMsg = gettext('Click to continue drawing<br/>' +
-          'Double-click or click last starting point to finish');
+          'Double-click or click starting point to finish');
 
       var measureArea = new ngeo.interaction.MeasureArea($filter('ngeoUnitPrefix'), {
         style: new ol.style.Style(),
@@ -99552,7 +99600,7 @@ ngeo.measureazimutDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing azimut');
+      var helpMsg = gettext('Click to start drawing circle');
       var contMsg = gettext('Click to finish');
 
       var measureAzimut = new ngeo.interaction.MeasureAzimut($filter('ngeoUnitPrefix'), {
@@ -99635,7 +99683,7 @@ ngeo.measurelengthDirective = function($compile, gettext, $filter) {
      */
     link: function($scope, element, attrs, drawFeatureCtrl) {
 
-      var helpMsg = gettext('Click to start drawing length');
+      var helpMsg = gettext('Click to start drawing line');
       var contMsg = gettext('Click to continue drawing<br/>' +
                             'Double-click or click last point to finish');
 
@@ -99785,6 +99833,7 @@ ngeo.module.directive('ngeoDrawfeature', ngeo.drawfeatureDirective);
  * @param {ngeo.FeatureHelper} ngeoFeatureHelper Ngeo feature helper service.
  * @param {ol.Collection.<ol.Feature>} ngeoFeatures Collection of features.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoDrawfeatureController
@@ -100029,6 +100078,7 @@ ngeo.module.directive('ngeoExportfeatures', ngeo.exportfeaturesDirective);
  * @param {!angular.Scope} $scope Angular scope.
  * @param {ngeo.FeatureHelper} ngeoFeatureHelper Ngeo feature helper service.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoExportfeaturesController
@@ -100288,6 +100338,7 @@ ngeo.module.value('ngeoGridTemplateUrl',
  * @param {Array.<Object>|undefined} data Entries/objects to be shown in a grid.
  * @param {Array.<ngeox.GridColumnDef>|undefined} columnDefs Column definition of a grid.
  * @constructor
+ * @struct
  * @export
  */
 ngeo.GridConfig = function(data, columnDefs) {
@@ -100452,6 +100503,7 @@ ngeo.module.directive('ngeoGrid', ngeo.gridDirective);
 /**
  * @param {!angular.Scope} $scope Angular scope.
  * @constructor
+ * @struct
  * @ngInject
  * @ngdoc controller
  * @ngname ngeoGridController
@@ -100995,17 +101047,18 @@ ngeo.module.directive('ngeoLayertree', ngeo.layertreeDirective);
 /**
  * The controller for the "tree node" directive.
  * @param {angular.Scope} $scope Scope.
- * @param {angular.JQLite} $element Element.
+ * @param {angular.Scope} $rootScope Angular rootScope.
  * @param {angular.Attributes} $attrs Attributes.
  * @param {ngeo.DecorateLayer} ngeoDecorateLayer layer decorator service.
  * @param {ngeo.DecorateLayerLoading} ngeoDecorateLayerLoading Decorate Layer service.
  * @constructor
  * @ngInject
  * @export
+ * @struct
  * @ngdoc controller
  * @ngname NgeoLayertreeController
  */
-ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer, ngeoDecorateLayerLoading) {
+ngeo.LayertreeController = function($scope, $rootScope, $attrs, ngeoDecorateLayer, ngeoDecorateLayerLoading) {
 
   var isRoot = $attrs['ngeoLayertreeNotroot'] === undefined;
 
@@ -101016,6 +101069,24 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
   this.isRoot = isRoot;
 
   var nodeExpr = $attrs['ngeoLayertree'];
+
+  /**
+   * @type {angular.Scope}
+   * @private
+   */
+  this.rootScope_ = $rootScope;
+
+  /**
+   * @type {!Object}
+   * @export
+   */
+  this.properties = {};
+
+  /**
+   * @type {!string}
+   * @private
+   */
+  this.state_ = 'off';
 
   /**
    * @type {Object|undefined}
@@ -101043,6 +101114,24 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
   this.parent = $scope.$parent['layertreeCtrl'];
 
   /**
+   * @type {Array.<ngeo.LayertreeController>}
+   * @export
+   */
+  this.children = [];
+
+  if (this.parent) {
+    this.parent.children.push(this);
+  }
+
+  $scope.$on('$destroy', function() {
+    if (this.parent) {
+      var index = this.parent.children.indexOf(this);
+      goog.asserts.assert(index >= 0);
+      this.parent.children.splice(index, 1);
+    }
+  }.bind(this));
+
+  /**
    * @type {number}
    * @export
    */
@@ -101052,7 +101141,7 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
    * @type {number}
    * @export
    */
-  this.depth = isRoot ? 0 : this.parent['depth'] + 1;
+  this.depth = isRoot ? 0 : this.parent.depth + 1;
 
   // We set 'uid' and 'depth' in the scope as well to access the parent values
   // in the inherited scopes. This is intended to be used in the javascript not
@@ -101084,13 +101173,20 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
    * @export
    */
   this.layer = isRoot ? null : /** @type {ol.layer.Layer} */
-      ($scope.$eval(nodelayerExpr, {'node': this.node, 'depth': this.depth, 'parentCtrl' : this.parent}));
+      ($scope.$eval(nodelayerExpr, {'treeCtrl' : this}));
 
   if (this.layer) {
     ngeoDecorateLayerLoading(this.layer, $scope);
     ngeoDecorateLayer(this.layer);
-  }
 
+    ol.events.listen(
+      this.layer,
+      ol.Object.getChangeEventType(ol.layer.LayerProperty.OPACITY),
+      function(evt) {
+        this.rootScope_.$broadcast('ngeo-layertree-opacity', this);
+      }, this
+    );
+  }
 
   var listenersExpr = $attrs['ngeoLayertreeListeners'];
   if (listenersExpr === undefined) {
@@ -101114,6 +101210,98 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
 
 
 /**
+ * Return the current state.
+ * @return {string} 'on', 'off', 'indeterminate'.
+ * @export
+ */
+ngeo.LayertreeController.prototype.getState = function() {
+  return this.state_;
+};
+
+
+/**
+ * Set the state of this treeCtrl. Update its children with its value and then
+ * ask its parent to refresh its state.
+ * @param {string} state 'on' or 'off'.
+ * @param {boolean=} opt_broadcast Broadcast.
+ * @export
+ */
+ngeo.LayertreeController.prototype.setState = function(state, opt_broadcast) {
+  if (state === this.state_) {
+    return;
+  }
+  this.setStateInternal_(state);
+
+  // Ask to its parent to update it's state.
+  if (this.parent) {
+    this.parent.refreshState();
+  }
+
+  var firstParents = this.isRoot ? this.children : [ngeo.LayertreeController.getFirstParentTree(this)];
+
+  if (opt_broadcast === undefined || opt_broadcast) {
+    firstParents.forEach(function(firstParent) {
+      this.rootScope_.$broadcast('ngeo-layertree-state', this, firstParent);
+    }.bind(this));
+  }
+};
+
+
+/**
+ * @param {string} state 'on' or 'off'.
+ */
+ngeo.LayertreeController.prototype.setStateInternal_ = function(state) {
+  // Set the state
+  this.state_ = state === 'on' ? 'on' : 'off';
+  // Asks to each child to set its state;
+  this.children.forEach(function(child) {
+    child.setStateInternal_(this.state_);
+  }, this);
+};
+
+
+/**
+ * Refresh the state of this treeCtrl based on it's children value. The call its
+ * parent to do the same.
+ * @public
+ */
+ngeo.LayertreeController.prototype.refreshState = function() {
+  var newState = this.getCalculateState();
+  if (this.state_ === newState) {
+    return;
+  }
+  this.state_ = newState;
+  if (this.parent) {
+    this.parent.refreshState();
+  }
+};
+
+
+/**
+ * Return the current state, calculate on all its children recursively.
+ * @return {string} 'on', 'off' or 'indeterminate'.
+ * @export
+ */
+ngeo.LayertreeController.prototype.getCalculateState = function() {
+  if (this.node.children === undefined) {
+    return this.state_;
+  }
+  var childState;
+  var previousChildState;
+  this.children.some(function(child) {
+    childState = child.getCalculateState();
+    if (previousChildState) {
+      if (previousChildState !== childState) {
+        return childState = 'indeterminate';
+      }
+    }
+    previousChildState = childState;
+  });
+  return childState;
+};
+
+
+/**
  * @param {boolean|undefined} val Value.
  * @return {boolean|undefined} Value.
  * @export
@@ -101121,7 +101309,9 @@ ngeo.LayertreeController = function($scope, $element, $attrs, ngeoDecorateLayer,
 ngeo.LayertreeController.prototype.getSetActive = function(val) {
   var layer = this.layer;
   var map = this.map;
-  goog.asserts.assert(this.layer !== null);
+  if (!layer) {
+    return;
+  }
   if (val !== undefined) {
     if (!val) {
       map.removeLayer(layer);
@@ -101130,6 +101320,70 @@ ngeo.LayertreeController.prototype.getSetActive = function(val) {
     }
   } else {
     return map.getLayers().getArray().indexOf(layer) >= 0;
+  }
+};
+
+
+/**
+ * Get the "top level" layertree (one of the first level child under the root
+ * layertree). Can return itself.
+ * @param {ngeo.LayertreeController} treeCtrl ngeo layertree controller.
+ * @return {ngeo.LayertreeController} the top level layertree.
+ * @public
+ */
+ngeo.LayertreeController.getFirstParentTree = function(treeCtrl) {
+  var tree = treeCtrl;
+  while (!tree.parent.isRoot) {
+    tree = tree.parent;
+  }
+  return tree;
+};
+
+
+/**
+ * @enum {string}
+ */
+ngeo.LayertreeController.VisitorDecision = {
+  STOP: 'STOP',
+  SKIP: 'SKIP',
+  DESCEND: 'DESCEND'
+};
+
+
+/**
+ * @typedef {
+ *   function(ngeo.LayertreeController): (!ngeo.LayertreeController.VisitorDecision|undefined)
+ * }
+ */
+ngeo.LayertreeController.Visitor;
+
+
+/**
+ * Recursive method to traverse the layertree controller graph.
+ * @param {ngeo.LayertreeController.Visitor} visitor A visitor called for each node.
+ * @return {boolean} whether to stop traversing.
+ * @export
+ */
+ngeo.LayertreeController.prototype.traverseDepthFirst = function(visitor) {
+  // First visit the current controller
+  var decision = visitor(this) || ngeo.LayertreeController.VisitorDecision.DESCEND;
+
+  switch (decision) {
+    case ngeo.LayertreeController.VisitorDecision.STOP:
+      return true; // stop traversing
+    case ngeo.LayertreeController.VisitorDecision.SKIP:
+      return false; // continue traversing but skip current branch
+    case ngeo.LayertreeController.VisitorDecision.DESCEND:
+      for (var i = 0; i < this.children.length; ++i) {
+        var child = this.children[i];
+        var stop = child.traverseDepthFirst(visitor);
+        if (stop) {
+          return true; // stop traversing
+        }
+      }
+      return false; // continue traversing
+    default:
+      goog.asserts.fail('Unhandled case');
   }
 };
 
@@ -101336,6 +101590,7 @@ ngeo.module.directive('ngeoMobileGeolocation', ngeo.mobileGeolocationDirective);
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope The directive's scope.
  * @param {angular.JQLite} $element Element.
  * @param {ngeo.DecorateGeolocation} ngeoDecorateGeolocation Decorate
@@ -101774,6 +102029,7 @@ ngeo.popoverContentDirective = function() {
 /**
  * The controller for the 'popover' directive.
  * @constructor
+ * @struct
  * @ngInject
  * @export
  * @ngdoc controller
@@ -105647,13 +105903,12 @@ goog.require('ol.Map');
  * See our live example: {@link ../examples/animation.html}
  *
  * @param {angular.$window} $window Angular window service.
- * @param {angular.$animate} $animate Angular animate service.
  * @return {angular.Directive} The directive specs.
  * @ngInject
  * @ngdoc directive
  * @ngname ngeoResizemap
  */
-ngeo.resizemapDirective = function($window, $animate) {
+ngeo.resizemapDirective = function($window) {
   var /** @type {number} */ duration = 1000;
 
   return {
@@ -105684,6 +105939,13 @@ ngeo.resizemapDirective = function($window, $animate) {
                   animationDelay.start();
                 }
               }, $window);
+
+          // Make sure the map is resized when the animation ends.
+          // It may help in case the animation didn't start correctly.
+          element.bind('transitionend',function() {
+            map.updateSize();
+            map.renderSync();
+          });
 
           scope.$watch(stateExpr, function(newVal, oldVal) {
             if (newVal != oldVal) {
@@ -105787,6 +106049,7 @@ ngeo.module.directive('ngeoScaleselector', ngeo.scaleselectorDirective);
 
 /**
  * @constructor
+ * @struct
  * @param {angular.Scope} $scope Directive scope.
  * @param {angular.JQLite} $element Element.
  * @param {angular.Attributes} $attrs Attributes.
@@ -113782,6 +114045,7 @@ ngeo.format.FeatureHashLegacyProperties_ = {};
  *
  * @see https://github.com/sbrunner/OpenLayers-URLCompressed
  * @constructor
+ * @struct
  * @extends {ol.format.TextFeature}
  * @param {ngeox.format.FeatureHashOptions=} opt_options Options.
  * @export
@@ -114934,6 +115198,7 @@ goog.require('ol.format.XML');
  * Reads attributes that are defined in XSD format and return them as a list.
  *
  * @constructor
+ * @struct
  * @extends {ol.format.XML}
  * @export
  */
@@ -115138,6 +115403,7 @@ ngeo.interaction.MobileDrawProperty = {
  * - line string
  *
  * @constructor
+ * @struct
  * @fires ol.interaction.DrawEvent
  * @extends {ol.interaction.Interaction}
  * @param {ngeox.interaction.MobileDrawOptions} options Options
@@ -115592,6 +115858,7 @@ goog.require('ngeo.interaction.MobileDraw');
  * Interaction dedicated to measure length on mobile devices.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.MeasureLength}
  * @param {ngeox.unitPrefix} format The format function
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
@@ -115634,6 +115901,7 @@ goog.require('ol.geom.Point');
  * Interaction dedicated to measure by coordinate (point) on mobile devices.
  *
  * @constructor
+ * @struct
  * @extends {ngeo.interaction.Measure}
  * @param {ngeox.interaction.MeasureOptions=} opt_options Options
  * @export
@@ -115707,6 +115975,7 @@ goog.require('ol.style.Style');
  * Interaction for modifying feature geometries.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -116197,6 +116466,7 @@ goog.require('ol.source.Vector');
  * Interaction for modifying feature geometries.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -116616,6 +116886,7 @@ goog.require('ol.interaction.Modify');
  * never share the same feature, they don't collide with one an other.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Interaction}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @export
@@ -116856,6 +117127,7 @@ ngeo.RotateEventType = {
  * instances of this type.
  *
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @implements {ngeox.RotateEvent}
  * @param {ngeo.RotateEventType} type Type.
@@ -116881,6 +117153,7 @@ ol.inherits(ngeo.RotateEvent, ol.events.Event);
  * Interaction to rotate features.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Pointer}
  * @param {olx.interaction.ModifyOptions} options Options.
  * @fires ngeo.interaction.ModifyCircleEvent
@@ -117668,6 +117941,7 @@ goog.require('ol.source.Vector');
  * - pressing the ESC key automatically deactivate the interaction.
  *
  * @constructor
+ * @struct
  * @extends {ol.interaction.Translate}
  * @param {ngeox.interaction.TranslateOptions} options Options.
  * @export
@@ -118395,6 +118669,7 @@ goog.require('ol.proj');
 
 /**
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoAutoProjection
  */
@@ -118531,6 +118806,7 @@ ngeo.BackgroundEventType = {
 
 /**
  * @constructor
+ * @struct
  * @extends {ol.events.Event}
  * @param {ngeo.BackgroundEventType} type Type.
  * @param {ol.layer.Base} previous Previous background layer.
@@ -118589,6 +118865,7 @@ ol.inherits(ngeo.BackgroundEvent, ol.events.Event);
  *
  * @extends {ol.Observable}
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoBackgroundLayerMgr
  */
@@ -118816,6 +119093,7 @@ goog.require('ngeo.Download');
  * @param {angular.$injector} $injector Main injector.
  * @param {angularGettext.Catalog} gettextCatalog Gettext service.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoCsvDownload
  * @ngInject
@@ -118976,6 +119254,7 @@ ngeo.CreatePopup;
  *     popup.setOpen(true);
  *
  * @constructor
+ * @struct
  * @param {angular.$compile} $compile The compile provider.
  * @param {angular.Scope} $rootScope The rootScope provider.
  * @param {angular.$sce} $sce Angular sce service.
@@ -119235,6 +119514,7 @@ goog.require('ngeo.Message');
  * @param {angularGettext.Catalog} gettextCatalog Gettext service.
  * @param {ngeo.CreatePopup} ngeoCreatePopup Popup service.
  * @constructor
+ * @struct
  * @extends {ngeo.Message}
  * @ngdoc service
  * @ngname ngeoDisclaimer
@@ -123163,6 +123443,7 @@ ngeo.MockLocationProvider;
  * @param {Location} location Location.
  * @param {History} history History.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoLocation
  */
@@ -124133,6 +124414,7 @@ ngeo.PrintStyleTypes_[ol.geom.GeometryType.MULTI_POLYGON] =
  *   as MapFish Print does not support sprite icons.
  *
  * @constructor
+ * @struct
  * @param {string} url URL to MapFish print web service.
  * @param {angular.$http} $http Angular $http service.
  * @param {ngeo.LayerHelper} ngeoLayerHelper Ngeo Layer Helper service.
@@ -124937,10 +125219,24 @@ goog.require('ngeo');
  * Provides a service with print utility functions.
  *
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoPrintUtils
  */
 ngeo.PrintUtils = function() {
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.extentHalfHorizontalDistance_;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.extentHalfVerticalDistance_;
+
 };
 
 
@@ -125613,6 +125909,7 @@ goog.require('ngeo.Location');
  * Provides a service for managing the application state.
  * The application state is written to both the URL and the local storage.
  * @constructor
+ * @struct
  * @param {ngeo.Location} ngeoLocation ngeo location service.
  * @ngInject
  */
@@ -125882,6 +126179,7 @@ goog.require('ngeo');
  * @param {string} activePropertyName The name of a boolean property on
  *      `toolContext` which represents the active state of the tool.
  * @constructor
+ * @struct
  * @ngdoc value
  * @ngname ngeoToolActivate
  * @export
@@ -125944,6 +126242,7 @@ ngeo.ToolMgrEntry;
  *
  * @param {angular.Scope} $rootScope The rootScope provider.
  * @constructor
+ * @struct
  * @ngdoc service
  * @ngname ngeoToolActivateMgr
  * @ngInject
@@ -126192,6 +126491,7 @@ ngeo.module.value('ngeoWfsPermalinkOptions',
  * parcels #78 and 90 of the city of Paris.
  *
  * @constructor
+ * @struct
  * @param {angular.$http} $http Angular $http service.
  * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
  * @param {ngeox.WfsPermalinkOptions} ngeoWfsPermalinkOptions The options to
