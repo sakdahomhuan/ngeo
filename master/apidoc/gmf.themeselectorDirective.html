@@ -49,14 +49,45 @@
 
 
 <div class="description">
-    <p>Note that this directive works with the gmf TreeManager service. Set the
-theme will update the &quot;tree&quot; object of this TreeManager service.
-Example:</p>
-<pre class="prettyprint source"><code>&lt;gmf-themeselector
+    <p>Note that this directive works with the <a href="gmf.TreeManager.html"><code>gmf.TreeManager</code></a>. Setting the
+theme will update the &quot;tree&quot; object of this <a href="gmf.TreeManager.html"><code>gmf.TreeManager</code></a>.</p>
+<p>Example:</p>
+<pre class="prettyprint source"><code> &lt;a href class=&quot;btn btn-default btn-block btn-primary&quot; data-toggle=&quot;dropdown&quot;>
+     &lt;span class=&quot;fa fa-grid&quot;>&lt;/span>
+     &lt;span translate>Theme:&lt;/span>
+     &lt;b ng-if=&quot;!mainCtrl.gmfThemeManager.themeName&quot; translate>Loading...&lt;/b>
+     &lt;b ng-if=&quot;mainCtrl.gmfThemeManager.themeName&quot;>{{mainCtrl.gmfThemeManager.themeName|translate}}&lt;/b>
+     &lt;span class=&quot;caret&quot;>&lt;/span>
+ &lt;/a>
+ &lt;gmf-themeselector
     id=&quot;themes&quot;
     data-header-title=&quot;Themes&quot;
     gmf-themeselector-filter=&quot;::mainCtrl.filter&quot;>
-&lt;/gmf-themeselector></code></pre>
+ &lt;/gmf-themeselector>
+ &lt;script>
+   (function() {
+     var module = angular.module('app');
+     module.value('gmfTreeManagerModeFlush', true);
+   })();
+ &lt;/script></code></pre><p>The theme selector can operate in a 'flush' (as above) or 'add' mode. For more information
+about these modes, refer to the documentation of <a href="gmf.TreeManager.html"><code>gmf.TreeManager</code></a>.</p>
+<p>Example in 'add' mode:</p>
+<pre class="prettyprint source"><code> &lt;a href class=&quot;btn btn-default btn-block btn-primary&quot; data-toggle=&quot;dropdown&quot;>
+     &lt;span class=&quot;fa fa-grid&quot;>&lt;/span>
+     &lt;span translate>Themes&lt;/span>
+     &lt;span class=&quot;caret&quot;>&lt;/span>
+ &lt;/a>
+ &lt;gmf-themeselector
+    id=&quot;themes&quot;
+    data-header-title=&quot;Themes&quot;
+    gmf-themeselector-filter=&quot;::mainCtrl.filter&quot;>
+ &lt;/gmf-themeselector>
+ &lt;script>
+   (function() {
+     var module = angular.module('app');
+     module.value('gmfTreeManagerModeFlush', false);
+   })();
+ &lt;/script></code></pre>
 </div>
 
 
@@ -152,8 +183,8 @@ Example:</p>
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/9f6d688474766f38ff81807f468f305339220353/contribs/gmf/src/directives/themeselector.js">contribs/gmf/src/directives/themeselector.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/9f6d688474766f38ff81807f468f305339220353/contribs/gmf/src/directives/themeselector.js#L27">line 27</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/a81c2bca7e1a1c307eb35af9209e4df532d14f07/contribs/gmf/src/directives/themeselector.js">contribs/gmf/src/directives/themeselector.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/a81c2bca7e1a1c307eb35af9209e4df532d14f07/contribs/gmf/src/directives/themeselector.js#L63">line 63</a>
     </li></ul></dd>
     
 
