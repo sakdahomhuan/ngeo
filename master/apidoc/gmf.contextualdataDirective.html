@@ -51,7 +51,7 @@
 <div class="description">
     <p>Provide a directive responsible of displaying contextual data after a right
 click on the map.</p>
-<p>This directive doesn't require be rendered in a visible DOM element.
+<p>This directive doesn't require being rendered in a visible DOM element.
 It's usually added to the element where the map directive is also added.</p>
 <p>Example:</p>
 <pre class="prettyprint source"><code>&lt;gmf-map gmf-map-map=&quot;mainCtrl.map&quot;
@@ -59,12 +59,13 @@ It's usually added to the element where the map directive is also added.</p>
     gmf-contextualdata-map=&quot;::mainCtrl.map&quot;
     gmf-contextualdata-projections=&quot;::[21781,4326]&quot;></code></pre><p>The content of the popover is managed in a partial that must be defined
 using the <code>gmfContextualdatacontentTemplateUrl</code> value. See
-<code>gmfContextualdatacontentDirective</code> for more detail.</p>
+<a href="gmf.contextualdatacontentDirective.html"><code>gmf.contextualdatacontentDirective</code></a> for more details.</p>
 <p>One can also provide a <code>gmf-contextualdata-callback</code> attribute in order to
 do some additional computing on the coordinate or the values received for
 the raster service. The callback function is called with the coordinate of
 the clicked point and the response data from the server. It is intended to
 return an object of additional properties to add to the scope.</p>
+<p>See the <a href="../examples/contribs/gmf/contextualdata.html">../examples/contribs/gmf/contextualdata.html</a> example for a usage sample.</p>
 </div>
 
 
@@ -208,8 +209,8 @@ return an object of additional properties to add to the scope.</p>
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/cbeeaf9b400bb367d67e69d9d70cfe58c2d194f5/contribs/gmf/src/directives/contextualdata.js">contribs/gmf/src/directives/contextualdata.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/cbeeaf9b400bb367d67e69d9d70cfe58c2d194f5/contribs/gmf/src/directives/contextualdata.js#L44">line 44</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/5a3bc5fc258344d1487d3820938d4c1ea711be7c/contribs/gmf/src/directives/contextualdata.js">contribs/gmf/src/directives/contextualdata.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/5a3bc5fc258344d1487d3820938d4c1ea711be7c/contribs/gmf/src/directives/contextualdata.js#L46">line 46</a>
     </li></ul></dd>
     
 
