@@ -111198,7 +111198,12 @@ ngeo.SortableOptions;
  * See our live example: [../examples/layerorder.html](../examples/layerorder.html)
  *
  * @htmlAttribute {Array.<ol.layer.Base>} ngeo-sortable The layers to sort.
- * @htmlAttribute {!ngeo.SortableOptions} ngeo-sortable The options.
+ * @htmlAttribute {!ngeo.SortableOptions} ngeo-sortable-options The options.
+ * @htmlAttribute {Function(angular.JQLite, Array)?} ngeo-sortable-callback
+ *     Callback function called after the move end. The Function will be called
+ *     with the element and the sort array as arguments.
+ * @htmlAttribute {Object?} ngeo-sortable-callback-ctx Context to apply at
+ *     the call of the callback function.
  * @param {angular.$timeout} $timeout Angular timeout service.
  * @return {angular.Directive} The directive specs.
  * @ngInject
@@ -111222,6 +111227,9 @@ ngeo.sortableDirective = function($timeout) {
 
           var optionsObject = scope.$eval(attrs['ngeoSortableOptions']);
           var options = getOptions(optionsObject);
+
+          var callbackFn = scope.$eval(attrs['ngeoSortableCallback']);
+          var callbackCtx = scope.$eval(attrs['ngeoSortableCallbackCtx']);
 
           /**
            * @type {goog.fx.DragListGroup}
@@ -111326,6 +111334,10 @@ ngeo.sortableDirective = function($timeout) {
                 scope.$apply(function() {
                   sortable.push(sortable.splice(idx, 1)[0]);
                 });
+              }
+              // Call the callback function if it exists.
+              if (callbackFn instanceof Function) {
+                callbackFn.apply(callbackCtx, [element, sortable]);
               }
             });
 
