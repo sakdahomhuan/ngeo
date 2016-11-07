@@ -34,6 +34,9 @@ app.module.value('gmfLayersUrl',
     'https://geomapfish-demo.camptocamp.net/2.1/wsgi/layers/');
 
 
+gmf.module.value('gmfTreeManagerModeFlush', true);
+
+
 /**
  * @param {gmf.ObjectEditingManager} gmfObjectEditingManager The gmf
  *     ObjectEditing manager service.
@@ -96,7 +99,7 @@ app.MainController = function(gmfObjectEditingManager, gmfThemes,
       // Add 'ObjectEditing' theme, i.e. the one with id 168
       for (var i = 0, ii = themes.length; i < ii; i++) {
         if (themes[i].id === 168) {
-          this.gmfTreeManager.setFirstLevelGroups(themes[i].children);
+          this.gmfTreeManager_.setFirstLevelGroups(themes[i].children);
           break;
         }
       }
