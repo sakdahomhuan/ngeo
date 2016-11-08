@@ -2,7 +2,6 @@ goog.provide('gmf-permalink');
 
 goog.require('gmf.mapDirective');
 goog.require('ngeo.proj.EPSG21781');
-goog.require('ngeo');
 goog.require('ol.Map');
 goog.require('ol.View');
 goog.require('ol.layer.Tile');

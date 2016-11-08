@@ -1,9 +1,7 @@
 goog.provide('gmf-xsdattributes');
 
-goog.require('gmf');
 goog.require('gmf.Themes');
 goog.require('gmf.XSDAttributes');
-goog.require('ngeo');
 goog.require('ngeo.attributesDirective');
 goog.require('ol.Feature');
 

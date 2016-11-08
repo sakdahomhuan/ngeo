@@ -1,6 +1,5 @@
 goog.provide('notification');
 
-goog.require('ngeo');
 goog.require('ngeo.Notification');
 
 

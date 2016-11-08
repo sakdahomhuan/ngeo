@@ -1,7 +1,6 @@
 goog.provide('gmf-objectediting-hub');
 
 goog.require('ngeo.proj.EPSG21781');
-goog.require('gmf');
 goog.require('gmf.ObjectEditingManager');
 goog.require('gmf.Themes');
 goog.require('ol.format.WFS');

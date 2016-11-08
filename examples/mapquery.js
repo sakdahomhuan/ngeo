@@ -1,7 +1,6 @@
 goog.provide('query');
 
 goog.require('ngeo.proj.EPSG21781');
-goog.require('ngeo');
 goog.require('ngeo.Query');
 goog.require('ngeo.ToolActivate');
 goog.require('ngeo.ToolActivateMgr');

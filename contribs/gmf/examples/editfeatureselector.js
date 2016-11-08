@@ -1,6 +1,5 @@
 goog.provide('gmf-editfeatureselector');
 
-goog.require('gmf');
 goog.require('gmf.Themes');
 goog.require('gmf.TreeManager');
 goog.require('gmf.authenticationDirective');

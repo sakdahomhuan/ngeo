@@ -1,6 +1,5 @@
 goog.provide('popup-service');
 
-goog.require('ngeo');
 goog.require('ngeo.CreatePopup');
 
 

@@ -1,7 +1,6 @@
 goog.provide('bboxquery');
 
 goog.require('ngeo.proj.EPSG21781');
-goog.require('ngeo');
 goog.require('ngeo.Query');
 goog.require('ngeo.btnDirective');
 goog.require('ngeo.mapDirective');

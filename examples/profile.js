@@ -1,10 +1,8 @@
 goog.provide('profile');
 
 
-goog.require('ngeo');
 goog.require('ngeo.mapDirective');
 goog.require('ngeo.profileDirective');
-goog.require('ol');
 goog.require('ol.Attribution');
 goog.require('ol.Feature');
 goog.require('ol.Map');
