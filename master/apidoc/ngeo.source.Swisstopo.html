@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>JSDoc: Namespace: gmf.ObjectEditingManager</title>
+    <title>JSDoc: Class: Swisstopo</title>
 
     <script src="scripts/prettify/prettify.js"> </script>
     <script src="scripts/prettify/lang-css.js"> </script>
@@ -17,7 +17,7 @@
 
 <div id="main">
 
-    <h1 class="page-title">Namespace: gmf.ObjectEditingManager</h1>
+    <h1 class="page-title">Class: Swisstopo</h1>
 
     
 
@@ -28,8 +28,8 @@
 
 <header>
     
-        <h2 id="Param">
-            <span class="ancestors">gmf.ObjectEditingManager.</span>Param
+        <h2 id="Swisstopo">
+            <span class="ancestors">ngeo.source.</span>Swisstopo
         </h2>
         
     
@@ -40,16 +40,32 @@
     
         
 
-        
-
-
     
-    <h5 class="subsection-title">Enumeration:</h5>
-    
+
+    <h4 class="name" id="Swisstopo"><span class="type-signature"></span>new Swisstopo<span class="signature">(options)</span><span class="type-signature"></span></h4>
 
     
 
-<table class="props">
+
+
+<div class="description">
+    <p>Layer source for the Swisstopo tile server.
+WARNING: This tile server is not publicly available: you have to be
+         registered by Swisstopo to use the service.</p>
+</div>
+
+
+
+
+
+
+
+
+
+    <h5>Parameters:</h5>
+    
+
+<table class="params">
     <thead>
     <tr>
         
@@ -62,9 +78,7 @@
 
         
 
-        
         <th class="last">Description</th>
-        
     </tr>
     </thead>
 
@@ -73,105 +87,27 @@
 
         <tr>
             
-                <td class="name"><code>ID</code></td>
+                <td class="name"><code>options</code></td>
             
 
             <td class="type">
             
-                
-<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
-
-
-            
             </td>
 
             
 
             
 
-            
-            <td class="description last"></td>
-            </td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>LAYER</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
-
-
-            
-            </td>
-
-            
-
-            
-
-            
-            <td class="description last"></td>
-            </td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>PROPERTY</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
-
-
-            
-            </td>
-
-            
-
-            
-
-            
-            <td class="description last"></td>
-            </td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>THEME</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
-
-
-            
-            </td>
-
-            
-
-            
-
-            
-            <td class="description last"></td>
-            </td>
+            <td class="description last"><p>WMTS options.</p></td>
         </tr>
 
     
     </tbody>
 </table>
+
+
+
+
 
 
 
@@ -206,22 +142,53 @@
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/7faad3694927245d387402d8d935a3f6a6345bef/contribs/gmf/src/services/objecteditingmanager.js">contribs/gmf/src/services/objecteditingmanager.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/7faad3694927245d387402d8d935a3f6a6345bef/contribs/gmf/src/services/objecteditingmanager.js#L8">line 8</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/7faad3694927245d387402d8d935a3f6a6345bef/src/source/swisstoposource.js">src/source/swisstoposource.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/7faad3694927245d387402d8d935a3f6a6345bef/src/source/swisstoposource.js#L55">line 55</a>
     </li></ul></dd>
     
 
     
 
     
+    <dt class="tag-see">See:</dt>
+    <dd class="tag-see">
+        <ul>
+            <li><a href="https://api3.geo.admin.ch/services/sdiservices.html#wmts">https://api3.geo.admin.ch/services/sdiservices.html#wmts</a></li>
+        </ul>
+    </dd>
+    
 
     
 </dl>
 
 
-        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
     </div>
+
+    
+        <h3 class="subsection-title">Extends</h3>
+
+        
+
+
+    <ul>
+        <li><a href="http://openlayers.org/en/master/apidoc/ol.source.WMTS.html">ol.source.WMTS</a></li>
+    </ul>
+
 
     
 
