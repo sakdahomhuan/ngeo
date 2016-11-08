@@ -4,7 +4,6 @@ goog.require('gmf');
 goog.require('ngeo.AutoProjection');
 goog.require('gmf.ObjectEditingManager');
 goog.require('gmf.Themes');
-goog.require('gmf.ThemeManager');
 goog.require('gmf.TreeManager');
 goog.require('ngeo.BackgroundEventType');
 goog.require('ngeo.BackgroundLayerMgr');
@@ -92,7 +91,7 @@ gmf.module.value('gmfPermalinkOptions',
  */
 gmf.Permalink = function($timeout, ngeoBackgroundLayerMgr, ngeoDebounce,
     ngeoFeatureOverlayMgr, ngeoFeatureHelper, ngeoFeatures, ngeoLayerHelper,
-    ngeoStateManager, gmfObjectEditingManager, gmfThemes, gmfThemeManager,
+    ngeoStateManager, gmfObjectEditingManager, gmfThemes,
     gmfTreeManager, gmfPermalinkOptions, defaultTheme,
     ngeoLocation, ngeoWfsPermalink, ngeoAutoProjection, $rootScope, $injector) {
 
@@ -181,7 +180,7 @@ gmf.Permalink = function($timeout, ngeoBackgroundLayerMgr, ngeoDebounce,
    * @type {gmf.ThemeManager}
    * @private
    */
-  this.gmfThemeManager_ = gmfThemeManager;
+  this.gmfThemeManager_ = $injector.has('gmfThemeManager') ? $injector.get('gmfThemeManager') : undefined;
 
   /**
    * @type {gmfx.User|undefined}
@@ -366,11 +365,13 @@ gmf.Permalink = function($timeout, ngeoBackgroundLayerMgr, ngeoDebounce,
     }, this);
   }.bind(this));
 
-  $rootScope.$watch(function() {
-    return this.gmfThemeManager_.themeName;
-  }.bind(this), function(name) {
-    this.setThemeInUrl_();
-  }.bind(this));
+  if (this.gmfThemeManager_) {
+    $rootScope.$watch(function() {
+      return this.gmfThemeManager_.themeName;
+    }.bind(this), function(name) {
+      this.setThemeInUrl_();
+    }.bind(this));
+  }
 
   this.initLayers_();
 };
@@ -756,7 +757,7 @@ gmf.Permalink.prototype.themeInUrl_ = function(pathElements) {
  * @private
  */
 gmf.Permalink.prototype.setThemeInUrl_ = function() {
-  if (this.gmfThemeManager_.themeName) {
+  if (this.gmfThemeManager_ && this.gmfThemeManager_.themeName) {
     var pathElements = this.ngeoLocation_.getPath().split('/');
     goog.asserts.assert(pathElements.length > 1);
     if (pathElements[pathElements.length - 1] === '') {
@@ -806,7 +807,7 @@ gmf.Permalink.prototype.initLayers_ = function() {
       // fallback to the default theme
       themeName = this.defaultTheme_;
     }
-    if (this.gmfThemeManager_.modeFlush) {
+    if (this.gmfThemeManager_ && this.gmfThemeManager_.modeFlush) {
       this.gmfThemeManager_.themeName = themeName;
     }
 
