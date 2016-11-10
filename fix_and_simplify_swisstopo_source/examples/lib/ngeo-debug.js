@@ -125225,7 +125225,7 @@ ngeo.source.SwisstopoResolutions_ = [
  */
 ngeo.source.SwisstopoTileGrids_ = {
   'EPSG:2056': new ol.tilegrid.WMTS({
-    extent: [1420000, 130000, 1900000, 1350000],
+    extent: [2420000, 130000, 2900000, 1350000],
     resolutions: ngeo.source.SwisstopoResolutions_,
     matrixIds: ngeo.source.SwisstopoResolutions_.map(function(value, index) {
       return String(index);
@@ -125263,7 +125263,7 @@ ngeo.source.Swisstopo = function(options) {
   ol.source.WMTS.call(this, {
     attributions: [ngeo.source.Swisstopo.ATTRIBUTION_],
     url: 'https://wmts{5-9}.geo.admin.ch/1.0.0/{Layer}/default/{Time}' +
-        '/' + projection + '/{TileMatrix}/{TileRow}/{TileCol}.' + format,
+        '/' + matrixSet + '/{TileMatrix}/{TileRow}/{TileCol}.' + format,
     dimensions: {
       'Time': options.timestamp
     },
