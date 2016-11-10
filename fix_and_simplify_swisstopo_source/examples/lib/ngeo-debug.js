@@ -125261,7 +125261,7 @@ ngeo.source.swisstopoTileGrids_ = {
  * @private
  */
 ngeo.source.swisstopoBaseUrl_ = {
-  'EPSG:2056': 'https://wmts{10-14}.geo.admin.ch/EPSG/2056/1.0.0',
+  'EPSG:2056': 'https://wmts{10-14}.geo.admin.ch/1.0.0',
   'EPSG:21781': 'https://wmts{5-9}.geo.admin.ch/1.0.0'
 };
 
