@@ -125232,7 +125232,7 @@ ngeo.source.swisstopoResolutions_ = [
 ngeo.source.createSwisstopoMatrixSet_ = function(level) {
   goog.asserts.assert(level < ngeo.source.swisstopoResolutions_.length);
   var matrixSet = new Array(level);
-  for (var i = 0; i < level; ++i) {
+  for (var i = 0; i <= level; ++i) {
     matrixSet[i] = String(i);
   }
   return matrixSet;
@@ -125240,18 +125240,20 @@ ngeo.source.createSwisstopoMatrixSet_ = function(level) {
 
 
 /**
+ * Configure tilematrix set 27. Value of ch.swisstopo.pixelkarte-farbe from
+ * http://wmts10.geo.admin.ch/EPSG/2056/1.0.0/WMTSCapabilities.xml
  * @const {!Object.<string, ol.tilegrid.WMTS>}
  * @private
  */
 ngeo.source.swisstopoTileGrids_ = {
   'EPSG:2056': new ol.tilegrid.WMTS({
     extent: [2420000, 1030000, 2900000, 1350000],
-    resolutions: ngeo.source.swisstopoResolutions_,
+    resolutions: ngeo.source.swisstopoResolutions_.slice(0, 27 + 1),
     matrixIds: ngeo.source.createSwisstopoMatrixSet_(27)
   }),
   'EPSG:21781': new ol.tilegrid.WMTS({
     extent: [420000, 30000, 900000, 350000],
-    resolutions: ngeo.source.swisstopoResolutions_,
+    resolutions: ngeo.source.swisstopoResolutions_.slice(0, 27 + 1),
     matrixIds: ngeo.source.createSwisstopoMatrixSet_(27)
   })
 };
