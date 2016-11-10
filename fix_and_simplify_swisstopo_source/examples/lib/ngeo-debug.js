@@ -125240,8 +125240,10 @@ ngeo.source.createSwisstopoMatrixSet_ = function(level) {
 
 
 /**
- * Configure tilematrix set 27. Value of ch.swisstopo.pixelkarte-farbe from
+ * Configure tilematrix set 26 (maximum zoomlevel without interpolation).
+ * See ch.swisstopo.pixelkarte-farbe from
  * http://wmts10.geo.admin.ch/EPSG/2056/1.0.0/WMTSCapabilities.xml
+ * and notes in http://api3.geo.admin.ch/services/sdiservices.html#wmts
  * @const {!Object.<string, ol.tilegrid.WMTS>}
  * @private
  */
@@ -125259,12 +125261,20 @@ ngeo.source.swisstopoTileGrids_ = {
 };
 
 /**
- * @const {!Object.<string, string>}
+ * @param {string} projection The projection.
+ * @param {string} format The format.
+ * @return {string} the url.
  * @private
  */
-ngeo.source.swisstopoBaseUrl_ = {
-  'EPSG:2056': 'https://wmts{10-14}.geo.admin.ch/1.0.0',
-  'EPSG:21781': 'https://wmts{5-9}.geo.admin.ch/1.0.0'
+ngeo.source.swisstopoCreateUrl_ = function(projection, format) {
+  if (projection === 'EPSG:2056') {
+    return 'https://wmts{10-14}.geo.admin.ch/1.0.0/{Layer}/default/{Time}' +
+      '/2056/{TileMatrix}/{TileCol}/{TileRow}.' + format;
+  } else if (projection === 'EPSG:21781') {
+    return 'https://wmts{5-9}.geo.admin.ch/1.0.0/{Layer}/default/{Time}' +
+      '21781/{TileMatrix}/{TileRow}/{TileCol}.' + format;
+  }
+  goog.asserts.fail('Unsupported projection ' + projection);
 };
 
 /**
@@ -125284,12 +125294,10 @@ ngeo.source.Swisstopo = function(options) {
   goog.asserts.assert(projection === 'EPSG:21781' || projection === 'EPSG:2056');
   var tilegrid = ngeo.source.swisstopoTileGrids_[projection];
   var projectionCode = projection.split(':')[1];
-  var baseUrl = ngeo.source.swisstopoBaseUrl_[projection];
 
   ol.source.WMTS.call(this, {
     attributions: [ngeo.source.Swisstopo.ATTRIBUTION_],
-    url: baseUrl + '/{Layer}/default/{Time}/' + projectionCode
-      + '/{TileMatrix}/{TileRow}/{TileCol}.' + format,
+    url: ngeo.source.swisstopoCreateUrl_(projection, format),
     dimensions: {
       'Time': options.timestamp
     },
