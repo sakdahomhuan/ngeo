@@ -125225,7 +125225,7 @@ ngeo.source.SwisstopoResolutions_ = [
  */
 ngeo.source.SwisstopoTileGrids_ = {
   'EPSG:2056': new ol.tilegrid.WMTS({
-    extent: [2420000, 130000, 2900000, 1350000],
+    extent: [2420000, 1030000, 2900000, 1350000],
     resolutions: ngeo.source.SwisstopoResolutions_,
     matrixIds: ngeo.source.SwisstopoResolutions_.map(function(value, index) {
       return String(index);
