@@ -125210,36 +125210,60 @@ goog.require('ol.tilegrid.WMTS');
 
 
 /**
+ * Available resolutions as defined in
+ * http://api3.geo.admin.ch/services/sdiservices.html#wmts .
  * @const {!Array.<number>}
  * @private
  */
-ngeo.source.SwisstopoResolutions_ = [
+ngeo.source.swisstopoResolutions_ = [
   4000, 3750, 3500, 3250, 3000, 2750, 2500, 2250, 2000, 1750, 1500, 1250,
-  1000, 750, 650, 500, 250, 100, 50, 20, 10, 5, 2.5, 2, 1.5, 1, 0.5
+  1000, 750, 650, 500, 250, 100, 50, 20, 10, 5, 2.5, 2, 1.5, 1, 0.5,
+  0.25, 0.1
 ];
+
+
+/**
+ * The matrix set is is constructed by passing the matrix set defined in the
+ * table at http://api3.geo.admin.ch/services/sdiservices.html#wmts .
+ * @param {number} level The zoomlevel
+ * @return {!Array.<string>} matrix set.
+ * @private
+ */
+ngeo.source.createSwisstopoMatrixSet_ = function(level) {
+  goog.asserts.assert(level < ngeo.source.swisstopoResolutions_.length);
+  var matrixSet = new Array(level);
+  for (var i = 0; i < level; ++i) {
+    matrixSet[i] = String(i);
+  }
+  return matrixSet;
+};
 
 
 /**
  * @const {!Object.<string, ol.tilegrid.WMTS>}
  * @private
  */
-ngeo.source.SwisstopoTileGrids_ = {
+ngeo.source.swisstopoTileGrids_ = {
   'EPSG:2056': new ol.tilegrid.WMTS({
     extent: [2420000, 1030000, 2900000, 1350000],
-    resolutions: ngeo.source.SwisstopoResolutions_,
-    matrixIds: ngeo.source.SwisstopoResolutions_.map(function(value, index) {
-      return String(index);
-    })
+    resolutions: ngeo.source.swisstopoResolutions_,
+    matrixIds: ngeo.source.createSwisstopoMatrixSet_(27)
   }),
   'EPSG:21781': new ol.tilegrid.WMTS({
     extent: [420000, 30000, 900000, 350000],
-    resolutions: ngeo.source.SwisstopoResolutions_,
-    matrixIds: ngeo.source.SwisstopoResolutions_.map(function(value, index) {
-      return String(index);
-    })
+    resolutions: ngeo.source.swisstopoResolutions_,
+    matrixIds: ngeo.source.createSwisstopoMatrixSet_(27)
   })
 };
 
+/**
+ * @const {!Object.<string, string>}
+ * @private
+ */
+ngeo.source.swisstopoBaseUrl_ = {
+  'EPSG:2056': 'https://wmts{10-14}.geo.admin.ch/EPSG/2056/1.0.0',
+  'EPSG:21781': 'https://wmts{5-9}.geo.admin.ch/1.0.0'
+};
 
 /**
  * Layer source for the Swisstopo tile server.
@@ -125253,17 +125277,17 @@ ngeo.source.SwisstopoTileGrids_ = {
  * @export
  */
 ngeo.source.Swisstopo = function(options) {
-
   var format = options.format ? options.format : 'png';
   var projection = options.projection;
   goog.asserts.assert(projection === 'EPSG:21781' || projection === 'EPSG:2056');
-  var tilegrid = ngeo.source.SwisstopoTileGrids_[projection];
-  var matrixSet = projection.split(':')[1];
+  var tilegrid = ngeo.source.swisstopoTileGrids_[projection];
+  var projectionCode = projection.split(':')[1];
+  var baseUrl = ngeo.source.swisstopoBaseUrl_[projection];
 
   ol.source.WMTS.call(this, {
     attributions: [ngeo.source.Swisstopo.ATTRIBUTION_],
-    url: 'https://wmts{5-9}.geo.admin.ch/1.0.0/{Layer}/default/{Time}' +
-        '/' + matrixSet + '/{TileMatrix}/{TileRow}/{TileCol}.' + format,
+    url: baseUrl + '/{Layer}/default/{Time}/' + projectionCode
+      + '/{TileMatrix}/{TileRow}/{TileCol}.' + format,
     dimensions: {
       'Time': options.timestamp
     },
@@ -125271,7 +125295,7 @@ ngeo.source.Swisstopo = function(options) {
     requestEncoding: 'REST',
     layer: options.layer,
     style: 'default',
-    matrixSet: matrixSet,
+    matrixSet: projectionCode,
     format: 'image/' + format,
     tileGrid: tilegrid
   });
