@@ -125211,7 +125211,7 @@ goog.require('ol.tilegrid.WMTS');
 
 /**
  * Available resolutions as defined in
- * http://api3.geo.admin.ch/services/sdiservices.html#wmts .
+ * http://api3.geo.admin.ch/services/sdiservices.html#wmts.
  * @const {!Array.<number>}
  * @private
  */
@@ -125224,7 +125224,7 @@ ngeo.source.swisstopoResolutions_ = [
 
 /**
  * The matrix set is is constructed by passing the matrix set defined in the
- * table at http://api3.geo.admin.ch/services/sdiservices.html#wmts .
+ * table at http://api3.geo.admin.ch/services/sdiservices.html#wmts.
  * @param {number} level The zoomlevel
  * @return {!Array.<string>} matrix set.
  * @private
@@ -125243,7 +125243,7 @@ ngeo.source.createSwisstopoMatrixSet_ = function(level) {
  * Configure tilematrix set 26 (maximum zoomlevel without interpolation).
  * See ch.swisstopo.pixelkarte-farbe from
  * http://wmts10.geo.admin.ch/EPSG/2056/1.0.0/WMTSCapabilities.xml
- * and notes in http://api3.geo.admin.ch/services/sdiservices.html#wmts
+ * and notes in http://api3.geo.admin.ch/services/sdiservices.html#wmts.
  * @const {!Object.<string, ol.tilegrid.WMTS>}
  * @private
  */
@@ -125272,7 +125272,7 @@ ngeo.source.swisstopoCreateUrl_ = function(projection, format) {
       '/2056/{TileMatrix}/{TileCol}/{TileRow}.' + format;
   } else if (projection === 'EPSG:21781') {
     return 'https://wmts{5-9}.geo.admin.ch/1.0.0/{Layer}/default/{Time}' +
-      '21781/{TileMatrix}/{TileRow}/{TileCol}.' + format;
+      '/21781/{TileMatrix}/{TileRow}/{TileCol}.' + format;
   }
   goog.asserts.fail('Unsupported projection ' + projection);
 };
@@ -125289,15 +125289,16 @@ ngeo.source.swisstopoCreateUrl_ = function(projection, format) {
  * @export
  */
 ngeo.source.Swisstopo = function(options) {
-  var format = options.format ? options.format : 'png';
+  var format = options.format || 'image/png';
   var projection = options.projection;
   goog.asserts.assert(projection === 'EPSG:21781' || projection === 'EPSG:2056');
   var tilegrid = ngeo.source.swisstopoTileGrids_[projection];
   var projectionCode = projection.split(':')[1];
+  var extension = format.split('/')[1];
 
   ol.source.WMTS.call(this, {
     attributions: [ngeo.source.Swisstopo.ATTRIBUTION_],
-    url: ngeo.source.swisstopoCreateUrl_(projection, format),
+    url: ngeo.source.swisstopoCreateUrl_(projection, extension),
     dimensions: {
       'Time': options.timestamp
     },
@@ -125306,7 +125307,7 @@ ngeo.source.Swisstopo = function(options) {
     layer: options.layer,
     style: 'default',
     matrixSet: projectionCode,
-    format: 'image/' + format,
+    format: format,
     tileGrid: tilegrid
   });
 };
