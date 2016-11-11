@@ -54,7 +54,26 @@ layers added and removed from a map.</p>
 <p>Example:</p>
 <pre class="prettyprint source"><code> &lt;gmf-disclaimer
    gmf-disclaimer-map=&quot;::ctrl.map&quot;>
- &lt;/gmf-disclaimer></code></pre>
+ &lt;/gmf-disclaimer></code></pre><p>You can also display the disclaimer messages in popups or use them in another
+context. The example below show you how to display the disclaimer messages
+in a ngeo-modal window (external case).</p>
+<p>Example:</p>
+<pre class="prettyprint source"><code> &lt;gmf-disclaimer
+   gmf-disclaimer-map=&quot;::ctrl.map&quot;
+   gmf-disclaimer-external=&quot;::true&quot;
+   gmf-disclaimer-external-msg=&quot;disclaimerMsg&quot;
+   gmf-disclaimer-external-visibility=&quot;disclaimerVisibility&quot;>
+ &lt;/gmf-disclaimer>
+ &lt;ngeo-modal ng-model=&quot;disclaimerVisibility&quot;
+             ngeo-modal-destroy-content-on-hide=&quot;true&quot;>
+  &lt;div class=&quot;modal-header&quot;>
+    &lt;button type=&quot;button&quot; class=&quot;close&quot; data-dismiss=&quot;modal&quot;
+            aria-hidden=&quot;true&quot;>&times;&lt;/button>
+  &lt;/div>
+  &lt;div class=&quot;modal-body&quot;>
+    &lt;div ng-bind-html=&quot;disclaimerMsg&quot;>&lt;/div>
+  &lt;/div>
+&lt;/ngeo-modal></code></pre>
 </div>
 
 
@@ -94,7 +113,7 @@ layers added and removed from a map.</p>
 
         <tr>
             
-                <td class="name"><code>gmf-disclaimer-modal</code></td>
+                <td class="name"><code>gmf-disclaimer-popup</code></td>
             
 
             <td class="type">
@@ -119,7 +138,113 @@ layers added and removed from a map.</p>
             
 
             <td class="description last">Whether to show the disclaimer
-    messages in modals or not. Defaults to `false`.</td>
+    messages in popups or not. Defaults to `false`.</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>gmf-disclaimer-external</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean">boolean</a></span>
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+                    &lt;nullable><br>
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last">Whether to use disclaimer
+    messages elsewhere or not. Default to `false`. If true, you should use
+    the gmf-disclaimer-external-msg and the
+    gmf-disclaimer-external-visibility too.</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>gmf-disclaimer-external-visibility</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean">boolean</a></span>
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+                    &lt;nullable><br>
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last">variable that
+    will be set to true if the disclaimers contain a new message. To uses it,
+    you must set the gmf-disclaimer-external to true.</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>gmf-disclaimer-external-msg</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type"><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String">string</a></span>
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+                    &lt;nullable><br>
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last">variable that will
+    contains the disclaimer messages. To uses it, you must set the
+    gmf-disclaimer-external to true.</td>
         </tr>
 
     
@@ -194,8 +319,8 @@ layers added and removed from a map.</p>
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
     
-        <a href="https://github.com/camptocamp/ngeo/blob/8f573e47f8d758cf3c5e30abc50d8dfcd0619f01/contribs/gmf/src/directives/disclaimer.js">contribs/gmf/src/directives/disclaimer.js</a>,
-        <a href="https://github.com/camptocamp/ngeo/blob/8f573e47f8d758cf3c5e30abc50d8dfcd0619f01/contribs/gmf/src/directives/disclaimer.js#L28">line 28</a>
+        <a href="https://github.com/camptocamp/ngeo/blob/bdaa3b9412845f8c45d942cf45cd1037c592e80d/contribs/gmf/src/directives/disclaimer.js">contribs/gmf/src/directives/disclaimer.js</a>,
+        <a href="https://github.com/camptocamp/ngeo/blob/bdaa3b9412845f8c45d942cf45cd1037c592e80d/contribs/gmf/src/directives/disclaimer.js#L61">line 61</a>
     </li></ul></dd>
     
 
