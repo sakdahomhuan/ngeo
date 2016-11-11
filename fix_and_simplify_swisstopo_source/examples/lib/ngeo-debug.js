@@ -125295,6 +125295,8 @@ ngeo.source.Swisstopo = function(options) {
   var tilegrid = ngeo.source.swisstopoTileGrids_[projection];
   var projectionCode = projection.split(':')[1];
   var extension = format.split('/')[1];
+  goog.asserts.assert(projectionCode);
+  goog.asserts.assert(extension);
 
   ol.source.WMTS.call(this, {
     attributions: [ngeo.source.Swisstopo.ATTRIBUTION_],
