@@ -177,7 +177,10 @@
           </div>
           <gmf-disclaimer
             gmf-disclaimer-map="::mainCtrl.map"
-            gmf-disclaimer-modal="::true">
+            gmf-disclaimer-external="::true"
+            gmf-disclaimer-external-msg="disclaimerMsg"
+            gmf-disclaimer-external-visibility="disclaimerVisibility"
+            >
           </gmf-disclaimer>
         </div>
         <gmf-map class="gmf-map" gmf-map-map="mainCtrl.map"
@@ -217,6 +220,14 @@
       <ngeo-modal ng-model="mainCtrl.modalShareShown" ngeo-modal-destroy-content-on-hide="true">
         <gmf-share gmf-share-email="false"/>
       </ngeo-modal>
+      <ngeo-modal ng-model="disclaimerVisibility" ngeo-modal-destroy-content-on-hide="true">
+        <div class="modal-header">
+          <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div ng-bind-html="disclaimerMsg"></div>
+        </div>
+      </ngeo-modal>
     </main>
     <footer>
       <gmf-profile
@@ -242,7 +253,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = '8ea00fe485d025ecb04fd9ebc673e59ecf1f5d4d';
+        var cacheVersion = '7e83081bf8f2378c19f793c7a44107ac0ef6ff43';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
