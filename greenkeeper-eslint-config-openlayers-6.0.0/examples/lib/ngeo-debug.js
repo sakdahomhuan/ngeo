@@ -3036,7 +3036,7 @@ ol.AssertionError = function(code) {
 
   /**
    * Error code. The meaning of the code can be found on
-   * {@link https://openlayers.org/en/latest/errors.html} (replace `latest` with
+   * {@link https://openlayers.org/en/latest/doc/errors/} (replace `latest` with
    * the version found in the OpenLayers script's header comment if a version
    * other than the latest is used).
    * @type {number}
@@ -4806,8 +4806,12 @@ ol.string.compareVersions = function(v1, v2) {
     var n1 = parseInt(s1[i] || '0', 10);
     var n2 = parseInt(s2[i] || '0', 10);
 
-    if (n1 > n2) return 1;
-    if (n2 > n1) return -1;
+    if (n1 > n2) {
+      return 1;
+    }
+    if (n2 > n1) {
+      return -1;
+    }
   }
 
   return 0;
@@ -5133,6 +5137,69 @@ ol.coordinate.toStringHDMS = function(coordinate, opt_fractionDigits) {
  */
 ol.coordinate.toStringXY = function(coordinate, opt_fractionDigits) {
   return ol.coordinate.format(coordinate, '{x}, {y}', opt_fractionDigits);
+};
+
+goog.provide('ol.easing');
+
+
+/**
+ * Start slow and speed up.
+ * @param {number} t Input between 0 and 1.
+ * @return {number} Output between 0 and 1.
+ * @api
+ */
+ol.easing.easeIn = function(t) {
+  return Math.pow(t, 3);
+};
+
+
+/**
+ * Start fast and slow down.
+ * @param {number} t Input between 0 and 1.
+ * @return {number} Output between 0 and 1.
+ * @api
+ */
+ol.easing.easeOut = function(t) {
+  return 1 - ol.easing.easeIn(1 - t);
+};
+
+
+/**
+ * Start slow, speed up, and then slow down again.
+ * @param {number} t Input between 0 and 1.
+ * @return {number} Output between 0 and 1.
+ * @api
+ */
+ol.easing.inAndOut = function(t) {
+  return 3 * t * t - 2 * t * t * t;
+};
+
+
+/**
+ * Maintain a constant speed over time.
+ * @param {number} t Input between 0 and 1.
+ * @return {number} Output between 0 and 1.
+ * @api
+ */
+ol.easing.linear = function(t) {
+  return t;
+};
+
+
+/**
+ * Start slow, speed up, and at the very end slow down again.  This has the
+ * same general behavior as {@link ol.easing.inAndOut}, but the final slowdown
+ * is delayed.
+ * @param {number} t Input between 0 and 1.
+ * @return {number} Output between 0 and 1.
+ * @api
+ */
+ol.easing.upAndDown = function(t) {
+  if (t < 0.5) {
+    return ol.easing.inAndOut(2 * t);
+  } else {
+    return 1 - ol.easing.inAndOut(2 * (t - 0.5));
+  }
 };
 
 goog.provide('ol.extent');
@@ -9888,6 +9955,7 @@ goog.require('ol.RotationConstraint');
 goog.require('ol.array');
 goog.require('ol.asserts');
 goog.require('ol.coordinate');
+goog.require('ol.easing');
 goog.require('ol.extent');
 goog.require('ol.geom.Polygon');
 goog.require('ol.geom.SimpleGeometry');
@@ -9964,6 +10032,20 @@ ol.View = function(opt_options) {
   this.hints_ = [0, 0];
 
   /**
+   * @private
+   * @type {Array.<Array.<ol.ViewAnimation>>}
+   */
+  this.animations_ = [];
+
+  /**
+   * @private
+   * @type {number|undefined}
+   */
+  this.updateAnimationKey_;
+
+  this.updateAnimations_ = this.updateAnimations_.bind(this);
+
+  /**
    * @type {Object.<string, *>}
    */
   var properties = {};
@@ -10033,6 +10115,197 @@ ol.View = function(opt_options) {
 };
 ol.inherits(ol.View, ol.Object);
 
+
+/**
+ * Animate the view.  The view's center, zoom (or resolution), and rotation
+ * can be animated for smooth transitions between view states.  For example,
+ * to animate the view to a new zoom level:
+ *
+ *     view.animate({zoom: view.getZoom() + 1});
+ *
+ * By default, the animation lasts one second and uses in-and-out easing.  You
+ * can customize this behavior by including `duration` (in milliseconds) and
+ * `easing` options (see {@link ol.easing}).
+ *
+ * To chain together multiple animations, call the method with multiple
+ * animation objects.  For example, to first zoom and then pan:
+ *
+ *     view.animate({zoom: 10}, {center: [0, 0]});
+ *
+ * If you provide a function as the last argument to the animate method, it
+ * will get called at the end of an animation series.  The callback will be
+ * called with `true` if the animation series completed on its own or `false`
+ * if it was cancelled.
+ *
+ * Animations are cancelled by user interactions (e.g. dragging the map) or by
+ * calling `view.setCenter()`, `view.setResolution()`, or `view.setRotation()`
+ * (or another method that calls one of these).
+ *
+ * @param {...(olx.AnimationOptions|function(boolean))} var_args Animation
+ *     options.  Multiple animations can be run in series by passing multiple
+ *     options objects.  To run multiple animations in parallel, call the method
+ *     multiple times.  An optional callback can be provided as a final
+ *     argument.  The callback will be called with a boolean indicating whether
+ *     the animation completed without being cancelled.
+ * @api
+ */
+ol.View.prototype.animate = function(var_args) {
+  var start = Date.now();
+  var center = this.getCenter().slice();
+  var resolution = this.getResolution();
+  var rotation = this.getRotation();
+  var animationCount = arguments.length;
+  var callback;
+  if (animationCount > 1 && typeof arguments[animationCount - 1] === 'function') {
+    callback = arguments[animationCount - 1];
+    --animationCount;
+  }
+  var series = [];
+  for (var i = 0; i < animationCount; ++i) {
+    var options = /** @type olx.AnimationOptions */ (arguments[i]);
+
+    var animation = /** @type {ol.ViewAnimation} */ ({
+      start: start,
+      complete: false,
+      anchor: options.anchor,
+      duration: options.duration || 1000,
+      easing: options.easing || ol.easing.inAndOut
+    });
+
+    if (options.center) {
+      animation.sourceCenter = center;
+      animation.targetCenter = options.center;
+      center = animation.targetCenter;
+    }
+
+    if (options.zoom !== undefined) {
+      animation.sourceResolution = resolution;
+      animation.targetResolution = this.constrainResolution(
+            this.maxResolution_, options.zoom - this.minZoom_, 0);
+      resolution = animation.targetResolution;
+    } else if (options.resolution) {
+      animation.sourceResolution = this.getResolution();
+      animation.targetResolution = options.resolution;
+      resolution = animation.targetResolution;
+    }
+
+    if (options.rotation !== undefined) {
+      animation.sourceRotation = rotation;
+      animation.targetRotation = options.rotation;
+      rotation = animation.targetRotation;
+    }
+
+    animation.callback = callback;
+    start += animation.duration;
+    series.push(animation);
+  }
+  this.animations_.push(series);
+  this.setHint(ol.View.Hint.ANIMATING, 1);
+  this.updateAnimations_();
+};
+
+
+/**
+ * Determine if the view is being animated.
+ * @return {boolean} The view is being animated.
+ */
+ol.View.prototype.getAnimating = function() {
+  return this.getHints()[ol.View.Hint.ANIMATING] > 0;
+};
+
+
+/**
+ * Cancel any ongoing animations.
+ */
+ol.View.prototype.cancelAnimations = function() {
+  this.setHint(ol.View.Hint.ANIMATING, -this.getHints()[ol.View.Hint.ANIMATING]);
+  for (var i = 0, ii = this.animations_.length; i < ii; ++i) {
+    var series = this.animations_[i];
+    if (series[0].callback) {
+      series[0].callback(false);
+    }
+  }
+  this.animations_.length = 0;
+  this.changed(); // notify that the hint changed
+};
+
+/**
+ * Update all animations.
+ */
+ol.View.prototype.updateAnimations_ = function() {
+  if (this.updateAnimationKey_ !== undefined) {
+    cancelAnimationFrame(this.updateAnimationKey_);
+    this.updateAnimationKey_ = undefined;
+  }
+  if (!this.getAnimating()) {
+    return;
+  }
+  var now = Date.now();
+  var more = false;
+  for (var i = this.animations_.length - 1; i >= 0; --i) {
+    var series = this.animations_[i];
+    var seriesComplete = true;
+    for (var j = 0, jj = series.length; j < jj; ++j) {
+      var animation = series[j];
+      if (animation.complete) {
+        continue;
+      }
+      var elapsed = now - animation.start;
+      var fraction = elapsed / animation.duration;
+      if (fraction >= 1) {
+        animation.complete = true;
+        fraction = 1;
+      } else {
+        seriesComplete = false;
+      }
+      var progress = animation.easing(fraction);
+      if (animation.sourceCenter) {
+        var x0 = animation.sourceCenter[0];
+        var y0 = animation.sourceCenter[1];
+        var x1 = animation.targetCenter[0];
+        var y1 = animation.targetCenter[1];
+        var x = x0 + progress * (x1 - x0);
+        var y = y0 + progress * (y1 - y0);
+        this.set(ol.View.Property.CENTER, [x, y]);
+      }
+      if (animation.sourceResolution) {
+        var resolution = animation.sourceResolution +
+            progress * (animation.targetResolution - animation.sourceResolution);
+        if (animation.anchor) {
+          this.set(ol.View.Property.CENTER,
+              this.calculateCenterZoom(resolution, animation.anchor));
+        }
+        this.set(ol.View.Property.RESOLUTION, resolution);
+      }
+      if (animation.sourceRotation !== undefined) {
+        var rotation = animation.sourceRotation +
+            progress * (animation.targetRotation - animation.sourceRotation);
+        if (animation.anchor) {
+          this.set(ol.View.Property.CENTER,
+              this.calculateCenterRotate(rotation, animation.anchor));
+        }
+        this.set(ol.View.Property.ROTATION, rotation);
+      }
+      more = true;
+      if (!animation.complete) {
+        break;
+      }
+    }
+    if (seriesComplete) {
+      this.animations_[i] = null;
+      this.setHint(ol.View.Hint.ANIMATING, -1);
+      var callback = series[0].callback;
+      if (callback) {
+        callback(true);
+      }
+    }
+  }
+  // prune completed series
+  this.animations_ = this.animations_.filter(Boolean);
+  if (more && this.updateAnimationKey_ === undefined) {
+    this.updateAnimationKey_ = requestAnimationFrame(this.updateAnimations_);
+  }
+};
 
 /**
  * @param {number} rotation Target rotation.
@@ -10482,6 +10755,9 @@ ol.View.prototype.rotate = function(rotation, opt_anchor) {
  */
 ol.View.prototype.setCenter = function(center) {
   this.set(ol.View.Property.CENTER, center);
+  if (this.getAnimating()) {
+    this.cancelAnimations();
+  }
 };
 
 
@@ -10508,6 +10784,9 @@ ol.View.prototype.setHint = function(hint, delta) {
  */
 ol.View.prototype.setResolution = function(resolution) {
   this.set(ol.View.Property.RESOLUTION, resolution);
+  if (this.getAnimating()) {
+    this.cancelAnimations();
+  }
 };
 
 
@@ -10519,6 +10798,9 @@ ol.View.prototype.setResolution = function(resolution) {
  */
 ol.View.prototype.setRotation = function(rotation) {
   this.set(ol.View.Property.ROTATION, rotation);
+  if (this.getAnimating()) {
+    this.cancelAnimations();
+  }
 };
 
 
@@ -10675,69 +10957,6 @@ ol.View.Hint = {
   INTERACTING: 1
 };
 
-goog.provide('ol.easing');
-
-
-/**
- * Start slow and speed up.
- * @param {number} t Input between 0 and 1.
- * @return {number} Output between 0 and 1.
- * @api
- */
-ol.easing.easeIn = function(t) {
-  return Math.pow(t, 3);
-};
-
-
-/**
- * Start fast and slow down.
- * @param {number} t Input between 0 and 1.
- * @return {number} Output between 0 and 1.
- * @api
- */
-ol.easing.easeOut = function(t) {
-  return 1 - ol.easing.easeIn(1 - t);
-};
-
-
-/**
- * Start slow, speed up, and then slow down again.
- * @param {number} t Input between 0 and 1.
- * @return {number} Output between 0 and 1.
- * @api
- */
-ol.easing.inAndOut = function(t) {
-  return 3 * t * t - 2 * t * t * t;
-};
-
-
-/**
- * Maintain a constant speed over time.
- * @param {number} t Input between 0 and 1.
- * @return {number} Output between 0 and 1.
- * @api
- */
-ol.easing.linear = function(t) {
-  return t;
-};
-
-
-/**
- * Start slow, speed up, and at the very end slow down again.  This has the
- * same general behavior as {@link ol.easing.inAndOut}, but the final slowdown
- * is delayed.
- * @param {number} t Input between 0 and 1.
- * @return {number} Output between 0 and 1.
- * @api
- */
-ol.easing.upAndDown = function(t) {
-  if (t < 0.5) {
-    return ol.easing.inAndOut(2 * t);
-  } else {
-    return 1 - ol.easing.inAndOut(2 * (t - 0.5));
-  }
-};
-
 goog.provide('ol.animation');
 
 goog.require('ol');
@@ -10747,6 +10966,7 @@ goog.require('ol.easing');
 
 
 /**
+ * Deprecated (use {@link ol.View#animate} instead).
  * Generate an animated transition that will "bounce" the resolution as it
  * approaches the final value.
  * @param {olx.animation.BounceOptions} options Bounce options.
@@ -10754,6 +10974,7 @@ goog.require('ol.easing');
  * @api
  */
 ol.animation.bounce = function(options) {
+  ol.DEBUG && console.warn('ol.animation.bounce() is deprecated.  Use view.animate() instead.');
   var resolution = options.resolution;
   var start = options.start ? options.start : Date.now();
   var duration = options.duration !== undefined ? options.duration : 1000;
@@ -10785,12 +11006,14 @@ ol.animation.bounce = function(options) {
 
 
 /**
+ * Deprecated (use {@link ol.View#animate} instead).
  * Generate an animated transition while updating the view center.
  * @param {olx.animation.PanOptions} options Pan options.
  * @return {ol.PreRenderFunction} Pre-render function.
  * @api
  */
 ol.animation.pan = function(options) {
+  ol.DEBUG && console.warn('ol.animation.pan() is deprecated.  Use view.animate() instead.');
   var source = options.source;
   var start = options.start ? options.start : Date.now();
   var sourceX = source[0];
@@ -10826,12 +11049,14 @@ ol.animation.pan = function(options) {
 
 
 /**
+ * Deprecated (use {@link ol.View#animate} instead).
  * Generate an animated transition while updating the view rotation.
  * @param {olx.animation.RotateOptions} options Rotate options.
  * @return {ol.PreRenderFunction} Pre-render function.
  * @api
  */
 ol.animation.rotate = function(options) {
+  ol.DEBUG && console.warn('ol.animation.rotate() is deprecated.  Use view.animate() instead.');
   var sourceRotation = options.rotation ? options.rotation : 0;
   var start = options.start ? options.start : Date.now();
   var duration = options.duration !== undefined ? options.duration : 1000;
@@ -10873,12 +11098,14 @@ ol.animation.rotate = function(options) {
 
 
 /**
+ * Deprecated (use {@link ol.View#animate} instead).
  * Generate an animated transition while updating the view resolution.
  * @param {olx.animation.ZoomOptions} options Zoom options.
  * @return {ol.PreRenderFunction} Pre-render function.
  * @api
  */
 ol.animation.zoom = function(options) {
+  ol.DEBUG && console.warn('ol.animation.zoom() is deprecated.  Use view.animate() instead.');
   var sourceResolution = options.resolution;
   var start = options.start ? options.start : Date.now();
   var duration = options.duration !== undefined ? options.duration : 1000;
@@ -13508,7 +13735,6 @@ goog.provide('ol.control.Rotate');
 goog.require('ol.events');
 goog.require('ol.events.EventType');
 goog.require('ol');
-goog.require('ol.animation');
 goog.require('ol.control.Control');
 goog.require('ol.css');
 goog.require('ol.easing');
@@ -13636,13 +13862,14 @@ ol.control.Rotate.prototype.resetNorth_ = function() {
       if (currentRotation > Math.PI) {
         currentRotation -= 2 * Math.PI;
       }
-      map.beforeRender(ol.animation.rotate({
-        rotation: currentRotation,
+      view.animate({
+        rotation: 0,
         duration: this.duration_,
         easing: ol.easing.easeOut
-      }));
+      });
+    } else {
+      view.setRotation(0);
     }
-    view.setRotation(0);
   }
 };
 
@@ -13681,7 +13908,6 @@ goog.provide('ol.control.Zoom');
 goog.require('ol');
 goog.require('ol.events');
 goog.require('ol.events.EventType');
-goog.require('ol.animation');
 goog.require('ol.control.Control');
 goog.require('ol.css');
 goog.require('ol.easing');
@@ -13783,15 +14009,19 @@ ol.control.Zoom.prototype.zoomByDelta_ = function(delta) {
   }
   var currentResolution = view.getResolution();
   if (currentResolution) {
+    var newResolution = view.constrainResolution(currentResolution, delta);
     if (this.duration_ > 0) {
-      map.beforeRender(ol.animation.zoom({
-        resolution: currentResolution,
+      if (view.getAnimating()) {
+        view.cancelAnimations();
+      }
+      view.animate({
+        resolution: newResolution,
         duration: this.duration_,
         easing: ol.easing.easeOut
-      }));
+      });
+    } else {
+      view.setResolution(newResolution);
     }
-    var newResolution = view.constrainResolution(currentResolution, delta);
-    view.setResolution(newResolution);
   }
 };
 
@@ -17445,8 +17675,6 @@ ol.TileQueue.prototype.loadMoreTiles = function(maxTotalLoading, maxNewLoads) {
 
 goog.provide('ol.Kinetic');
 
-goog.require('ol.animation');
-
 
 /**
  * @classdesc
@@ -17551,32 +17779,6 @@ ol.Kinetic.prototype.end = function() {
 
 
 /**
- * @param {ol.Coordinate} source Source coordinate for the animation.
- * @return {ol.PreRenderFunction} Pre-render function for kinetic animation.
- */
-ol.Kinetic.prototype.pan = function(source) {
-  var decay = this.decay_;
-  var initialVelocity = this.initialVelocity_;
-  var velocity = this.minVelocity_ - initialVelocity;
-  var duration = this.getDuration_();
-  var easingFunction = (
-      /**
-       * @param {number} t T.
-       * @return {number} Easing.
-       */
-      function(t) {
-        return initialVelocity * (Math.exp((decay * t) * duration) - 1) /
-            velocity;
-      });
-  return ol.animation.pan({
-    source: source,
-    duration: duration,
-    easing: easingFunction
-  });
-};
-
-
-/**
  * @private
  * @return {number} Duration of animation (milliseconds).
  */
@@ -17606,7 +17808,6 @@ goog.provide('ol.interaction.Interaction');
 
 goog.require('ol');
 goog.require('ol.Object');
-goog.require('ol.animation');
 goog.require('ol.easing');
 
 
@@ -17701,16 +17902,17 @@ ol.interaction.Interaction.prototype.setMap = function(map) {
 ol.interaction.Interaction.pan = function(map, view, delta, opt_duration) {
   var currentCenter = view.getCenter();
   if (currentCenter) {
-    if (opt_duration && opt_duration > 0) {
-      map.beforeRender(ol.animation.pan({
-        source: currentCenter,
-        duration: opt_duration,
-        easing: ol.easing.linear
-      }));
-    }
     var center = view.constrainCenter(
         [currentCenter[0] + delta[0], currentCenter[1] + delta[1]]);
-    view.setCenter(center);
+    if (opt_duration) {
+      view.animate({
+        duration: opt_duration,
+        easing: ol.easing.linear,
+        center: center
+      });
+    } else {
+      view.setCenter(center);
+    }
   }
 };
 
@@ -17740,22 +17942,16 @@ ol.interaction.Interaction.rotateWithoutConstraints = function(map, view, rotati
   if (rotation !== undefined) {
     var currentRotation = view.getRotation();
     var currentCenter = view.getCenter();
-    if (currentRotation !== undefined && currentCenter &&
-        opt_duration && opt_duration > 0) {
-      map.beforeRender(ol.animation.rotate({
-        rotation: currentRotation,
+    if (currentRotation !== undefined && currentCenter && opt_duration > 0) {
+      view.animate({
+        rotation: rotation,
+        anchor: opt_anchor,
         duration: opt_duration,
         easing: ol.easing.easeOut
-      }));
-      if (opt_anchor) {
-        map.beforeRender(ol.animation.pan({
-          source: currentCenter,
-          duration: opt_duration,
-          easing: ol.easing.easeOut
-        }));
-      }
+      });
+    } else {
+      view.rotate(rotation, opt_anchor);
     }
-    view.rotate(rotation, opt_anchor);
   }
 };
 
@@ -17809,26 +18005,20 @@ ol.interaction.Interaction.zoomWithoutConstraints = function(map, view, resoluti
     var currentResolution = view.getResolution();
     var currentCenter = view.getCenter();
     if (currentResolution !== undefined && currentCenter &&
-        resolution !== currentResolution &&
-        opt_duration && opt_duration > 0) {
-      map.beforeRender(ol.animation.zoom({
-        resolution: currentResolution,
+        resolution !== currentResolution && opt_duration) {
+      view.animate({
+        resolution: resolution,
+        anchor: opt_anchor,
         duration: opt_duration,
         easing: ol.easing.easeOut
-      }));
+      });
+    } else {
       if (opt_anchor) {
-        map.beforeRender(ol.animation.pan({
-          source: currentCenter,
-          duration: opt_duration,
-          easing: ol.easing.easeOut
-        }));
+        var center = view.calculateCenterZoom(resolution, opt_anchor);
+        view.setCenter(center);
       }
+      view.setResolution(resolution);
     }
-    if (opt_anchor) {
-      var center = view.calculateCenterZoom(resolution, opt_anchor);
-      view.setCenter(center);
-    }
-    view.setResolution(resolution);
   }
 };
 
@@ -18356,6 +18546,7 @@ goog.provide('ol.interaction.DragPan');
 goog.require('ol');
 goog.require('ol.View');
 goog.require('ol.coordinate');
+goog.require('ol.easing');
 goog.require('ol.events.condition');
 goog.require('ol.functions');
 goog.require('ol.interaction.Pointer');
@@ -18385,12 +18576,6 @@ ol.interaction.DragPan = function(opt_options) {
    * @type {ol.Kinetic|undefined}
    */
   this.kinetic_ = options.kinetic;
-
-  /**
-   * @private
-   * @type {?ol.PreRenderFunction}
-   */
-  this.kineticPreRenderFn_ = null;
 
   /**
    * @type {ol.Pixel}
@@ -18458,15 +18643,16 @@ ol.interaction.DragPan.handleUpEvent_ = function(mapBrowserEvent) {
       var distance = this.kinetic_.getDistance();
       var angle = this.kinetic_.getAngle();
       var center = /** @type {!ol.Coordinate} */ (view.getCenter());
-      this.kineticPreRenderFn_ = this.kinetic_.pan(center);
-      map.beforeRender(this.kineticPreRenderFn_);
       var centerpx = map.getPixelFromCoordinate(center);
       var dest = map.getCoordinateFromPixel([
         centerpx[0] - distance * Math.cos(angle),
         centerpx[1] - distance * Math.sin(angle)
       ]);
-      dest = view.constrainCenter(dest);
-      view.setCenter(dest);
+      view.animate({
+        center: view.constrainCenter(dest),
+        duration: 500,
+        easing: ol.easing.easeOut
+      });
     } else {
       // the view is not updated, force a render
       map.render();
@@ -18494,11 +18680,8 @@ ol.interaction.DragPan.handleDownEvent_ = function(mapBrowserEvent) {
     if (!this.handlingDownUpSequence) {
       view.setHint(ol.View.Hint.INTERACTING, 1);
     }
-    if (this.kineticPreRenderFn_ &&
-        map.removePreRenderFunction(this.kineticPreRenderFn_)) {
-      view.setCenter(mapBrowserEvent.frameState.viewState.center);
-      this.kineticPreRenderFn_ = null;
-    }
+    // stop any current animation
+    view.setCenter(mapBrowserEvent.frameState.viewState.center);
     if (this.kinetic_) {
       this.kinetic_.begin();
     }
@@ -19020,7 +19203,6 @@ ol.inherits(ol.interaction.DragBox.Event, ol.events.Event);
 goog.provide('ol.interaction.DragZoom');
 
 goog.require('ol');
-goog.require('ol.animation');
 goog.require('ol.easing');
 goog.require('ol.events.condition');
 goog.require('ol.extent');
@@ -19094,23 +19276,13 @@ ol.interaction.DragZoom.prototype.onBoxEnd = function() {
   var resolution = view.constrainResolution(
       view.getResolutionForExtent(extent, size));
 
-  var currentResolution = /** @type {number} */ (view.getResolution());
-
-  var currentCenter = /** @type {!ol.Coordinate} */ (view.getCenter());
-
-  map.beforeRender(ol.animation.zoom({
-    resolution: currentResolution,
+  view.animate({
+    resolution: resolution,
+    center: ol.extent.getCenter(extent),
     duration: this.duration_,
     easing: ol.easing.easeOut
-  }));
-  map.beforeRender(ol.animation.pan({
-    source: currentCenter,
-    duration: this.duration_,
-    easing: ol.easing.easeOut
-  }));
+  });
 
-  view.setCenter(ol.extent.getCenter(extent));
-  view.setResolution(resolution);
 };
 
 goog.provide('ol.events.KeyCode');
@@ -19324,6 +19496,7 @@ ol.interaction.KeyboardZoom.handleEvent = function(mapBrowserEvent) {
 goog.provide('ol.interaction.MouseWheelZoom');
 
 goog.require('ol');
+goog.require('ol.easing');
 goog.require('ol.events.EventType');
 goog.require('ol.has');
 goog.require('ol.interaction.Interaction');
@@ -19389,6 +19562,26 @@ ol.interaction.MouseWheelZoom = function(opt_options) {
    */
   this.timeoutId_ = undefined;
 
+  /**
+   * @private
+   * @type {ol.interaction.MouseWheelZoom.Mode|undefined}
+   */
+  this.mode_ = undefined;
+
+  /**
+   * The number of delta values per zoom level
+   * @private
+   * @type {number}
+   */
+  this.trackpadDeltaPerZoom_ = 300;
+
+  /**
+   * The zoom factor by which scroll zooming is allowed to exceed the limits.
+   * @private
+   * @type {number}
+   */
+  this.trackpadZoomBuffer_ = 1.5;
+
 };
 ol.inherits(ol.interaction.MouseWheelZoom, ol.interaction.Interaction);
 
@@ -19397,57 +19590,105 @@ ol.inherits(ol.interaction.MouseWheelZoom, ol.interaction.Interaction);
  * Handles the {@link ol.MapBrowserEvent map browser event} (if it was a
  * mousewheel-event) and eventually zooms the map.
  * @param {ol.MapBrowserEvent} mapBrowserEvent Map browser event.
- * @return {boolean} `false` to stop event propagation.
+ * @return {boolean} Allow event propagation.
  * @this {ol.interaction.MouseWheelZoom}
  * @api
  */
 ol.interaction.MouseWheelZoom.handleEvent = function(mapBrowserEvent) {
-  var stopEvent = false;
-  if (mapBrowserEvent.type == ol.events.EventType.WHEEL ||
-      mapBrowserEvent.type == ol.events.EventType.MOUSEWHEEL) {
-    var map = mapBrowserEvent.map;
-    var wheelEvent = /** @type {WheelEvent} */ (mapBrowserEvent.originalEvent);
-
-    if (this.useAnchor_) {
-      this.lastAnchor_ = mapBrowserEvent.coordinate;
-    }
-
-    // Delta normalisation inspired by
-    // https://github.com/mapbox/mapbox-gl-js/blob/001c7b9/js/ui/handler/scroll_zoom.js
-    //TODO There's more good stuff in there for inspiration to improve this interaction.
-    var delta;
-    if (mapBrowserEvent.type == ol.events.EventType.WHEEL) {
-      delta = wheelEvent.deltaY;
-      if (ol.has.FIREFOX &&
-          wheelEvent.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
-        delta /= ol.has.DEVICE_PIXEL_RATIO;
-      }
-      if (wheelEvent.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-        delta *= 40;
-      }
-    } else if (mapBrowserEvent.type == ol.events.EventType.MOUSEWHEEL) {
-      delta = -wheelEvent.wheelDeltaY;
-      if (ol.has.SAFARI) {
-        delta /= 3;
-      }
-    }
-
-    this.delta_ += delta;
-
-    if (this.startTime_ === undefined) {
-      this.startTime_ = Date.now();
-    }
-
-    var timeLeft = Math.max(this.timeout_ - (Date.now() - this.startTime_), 0);
-
-    clearTimeout(this.timeoutId_);
-    this.timeoutId_ = setTimeout(
-        this.doZoom_.bind(this, map), timeLeft);
-
-    mapBrowserEvent.preventDefault();
-    stopEvent = true;
+  var type = mapBrowserEvent.type;
+  if (type !== ol.events.EventType.WHEEL && type !== ol.events.EventType.MOUSEWHEEL) {
+    return true;
   }
-  return !stopEvent;
+
+  mapBrowserEvent.preventDefault();
+
+  var map = mapBrowserEvent.map;
+  var wheelEvent = /** @type {WheelEvent} */ (mapBrowserEvent.originalEvent);
+
+  if (this.useAnchor_) {
+    this.lastAnchor_ = mapBrowserEvent.coordinate;
+  }
+
+  // Delta normalisation inspired by
+  // https://github.com/mapbox/mapbox-gl-js/blob/001c7b9/js/ui/handler/scroll_zoom.js
+  var delta;
+  if (mapBrowserEvent.type == ol.events.EventType.WHEEL) {
+    delta = wheelEvent.deltaY;
+    if (ol.has.FIREFOX &&
+        wheelEvent.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+      delta /= ol.has.DEVICE_PIXEL_RATIO;
+    }
+    if (wheelEvent.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      delta *= 40;
+    }
+  } else if (mapBrowserEvent.type == ol.events.EventType.MOUSEWHEEL) {
+    delta = -wheelEvent.wheelDeltaY;
+    if (ol.has.SAFARI) {
+      delta /= 3;
+    }
+  }
+
+  if (delta === 0) {
+    return false;
+  }
+
+  var now = Date.now();
+
+  if (this.startTime_ === undefined) {
+    this.startTime_ = now;
+  }
+
+  if (!this.mode_ || now - this.startTime_ > 400) {
+    this.mode_ = Math.abs(delta) < 4 ?
+        ol.interaction.MouseWheelZoom.Mode.TRACKPAD :
+        ol.interaction.MouseWheelZoom.Mode.WHEEL;
+  }
+
+  if (this.mode_ === ol.interaction.MouseWheelZoom.Mode.TRACKPAD) {
+    var view = map.getView();
+    var resolution = view.getResolution() * Math.pow(2, delta / this.trackpadDeltaPerZoom_);
+    var minResolution = view.getMinResolution();
+    var maxResolution = view.getMaxResolution();
+    var rebound = 0;
+    if (resolution < minResolution) {
+      resolution = Math.max(resolution, minResolution / this.trackpadZoomBuffer_);
+      rebound = 1;
+    } else if (resolution > maxResolution) {
+      resolution = Math.min(resolution, maxResolution * this.trackpadZoomBuffer_);
+      rebound = -1;
+    }
+    if (this.lastAnchor_) {
+      var center = view.calculateCenterZoom(resolution, this.lastAnchor_);
+      view.setCenter(center);
+    }
+    view.setResolution(resolution);
+    if (rebound > 0) {
+      view.animate({
+        resolution: minResolution,
+        easing: ol.easing.easeOut,
+        anchor: this.lastAnchor_,
+        duration: 500
+      });
+    } else if (rebound < 0) {
+      view.animate({
+        resolution: maxResolution,
+        easing: ol.easing.easeOut,
+        anchor: this.lastAnchor_,
+        duration: 500
+      });
+    }
+    this.startTime_ = now;
+    return false;
+  }
+
+  this.delta_ += delta;
+
+  var timeLeft = Math.max(this.timeout_ - (now - this.startTime_), 0);
+
+  clearTimeout(this.timeoutId_);
+  this.timeoutId_ = setTimeout(this.handleWheelZoom_.bind(this, map), timeLeft);
+
+  return false;
 };
 
 
@@ -19455,15 +19696,16 @@ ol.interaction.MouseWheelZoom.handleEvent = function(mapBrowserEvent) {
  * @private
  * @param {ol.Map} map Map.
  */
-ol.interaction.MouseWheelZoom.prototype.doZoom_ = function(map) {
+ol.interaction.MouseWheelZoom.prototype.handleWheelZoom_ = function(map) {
+  var view = map.getView();
+  if (view.getAnimating()) {
+    view.cancelAnimations();
+  }
   var maxDelta = ol.MOUSEWHEELZOOM_MAXDELTA;
   var delta = ol.math.clamp(this.delta_, -maxDelta, maxDelta);
-
-  var view = map.getView();
-
   ol.interaction.Interaction.zoomByDelta(map, view, -delta, this.lastAnchor_,
       this.duration_);
-
+  this.mode_ = undefined;
   this.delta_ = 0;
   this.lastAnchor_ = null;
   this.startTime_ = undefined;
@@ -19482,6 +19724,15 @@ ol.interaction.MouseWheelZoom.prototype.setMouseAnchor = function(useAnchor) {
   if (!useAnchor) {
     this.lastAnchor_ = null;
   }
+};
+
+
+/**
+ * @enum {string}
+ */
+ol.interaction.MouseWheelZoom.Mode = {
+  TRACKPAD: 'trackpad',
+  WHEEL: 'wheel'
 };
 
 goog.provide('ol.interaction.PinchRotate');
@@ -26685,14 +26936,15 @@ ol.render.canvas.LineStringReplay.prototype.setStrokeStyle_ = function() {
       state.currentLineWidth != lineWidth ||
       state.currentMiterLimit != miterLimit) {
     if (state.lastStroke != this.coordinates.length) {
-      this.instructions.push(
-          [ol.render.canvas.Instruction.STROKE]);
+      this.instructions.push([ol.render.canvas.Instruction.STROKE]);
       state.lastStroke = this.coordinates.length;
     }
-    this.instructions.push(
-        [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-         strokeStyle, lineWidth, lineCap, lineJoin, miterLimit, lineDash],
-        [ol.render.canvas.Instruction.BEGIN_PATH]);
+    this.instructions.push([
+      ol.render.canvas.Instruction.SET_STROKE_STYLE,
+      strokeStyle, lineWidth, lineCap, lineJoin, miterLimit, lineDash
+    ], [
+      ol.render.canvas.Instruction.BEGIN_PATH
+    ]);
     state.currentStrokeStyle = strokeStyle;
     state.currentLineCap = lineCap;
     state.currentLineDash = lineDash;
@@ -26716,15 +26968,16 @@ ol.render.canvas.LineStringReplay.prototype.drawLineString = function(lineString
   }
   this.setStrokeStyle_();
   this.beginGeometry(lineStringGeometry, feature);
-  this.hitDetectionInstructions.push(
-      [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-       state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
-       state.miterLimit, state.lineDash],
-      [ol.render.canvas.Instruction.BEGIN_PATH]);
+  this.hitDetectionInstructions.push([
+    ol.render.canvas.Instruction.SET_STROKE_STYLE,
+    state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
+    state.miterLimit, state.lineDash
+  ], [
+    ol.render.canvas.Instruction.BEGIN_PATH
+  ]);
   var flatCoordinates = lineStringGeometry.getFlatCoordinates();
   var stride = lineStringGeometry.getStride();
-  this.drawFlatCoordinates_(
-      flatCoordinates, 0, flatCoordinates.length, stride);
+  this.drawFlatCoordinates_(flatCoordinates, 0, flatCoordinates.length, stride);
   this.hitDetectionInstructions.push([ol.render.canvas.Instruction.STROKE]);
   this.endGeometry(lineStringGeometry, feature);
 };
@@ -26743,11 +26996,13 @@ ol.render.canvas.LineStringReplay.prototype.drawMultiLineString = function(multi
   }
   this.setStrokeStyle_();
   this.beginGeometry(multiLineStringGeometry, feature);
-  this.hitDetectionInstructions.push(
-      [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-       state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
-       state.miterLimit, state.lineDash],
-      [ol.render.canvas.Instruction.BEGIN_PATH]);
+  this.hitDetectionInstructions.push([
+    ol.render.canvas.Instruction.SET_STROKE_STYLE,
+    state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
+    state.miterLimit, state.lineDash
+  ], [
+    ol.render.canvas.Instruction.BEGIN_PATH
+  ]);
   var ends = multiLineStringGeometry.getEnds();
   var flatCoordinates = multiLineStringGeometry.getFlatCoordinates();
   var stride = multiLineStringGeometry.getStride();
@@ -26946,14 +27201,16 @@ ol.render.canvas.PolygonReplay.prototype.drawCircle = function(circleGeometry, f
   this.setFillStrokeStyles_(circleGeometry);
   this.beginGeometry(circleGeometry, feature);
   // always fill the circle for hit detection
-  this.hitDetectionInstructions.push(
-      [ol.render.canvas.Instruction.SET_FILL_STYLE,
-       ol.color.asString(ol.render.canvas.defaultFillStyle)]);
+  this.hitDetectionInstructions.push([
+    ol.render.canvas.Instruction.SET_FILL_STYLE,
+    ol.color.asString(ol.render.canvas.defaultFillStyle)
+  ]);
   if (state.strokeStyle !== undefined) {
-    this.hitDetectionInstructions.push(
-        [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-         state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
-         state.miterLimit, state.lineDash]);
+    this.hitDetectionInstructions.push([
+      ol.render.canvas.Instruction.SET_STROKE_STYLE,
+      state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
+      state.miterLimit, state.lineDash
+    ]);
   }
   var flatCoordinates = circleGeometry.getFlatCoordinates();
   var stride = circleGeometry.getStride();
@@ -26996,14 +27253,16 @@ ol.render.canvas.PolygonReplay.prototype.drawPolygon = function(polygonGeometry,
   this.setFillStrokeStyles_(polygonGeometry);
   this.beginGeometry(polygonGeometry, feature);
   // always fill the polygon for hit detection
-  this.hitDetectionInstructions.push(
-      [ol.render.canvas.Instruction.SET_FILL_STYLE,
-       ol.color.asString(ol.render.canvas.defaultFillStyle)]);
+  this.hitDetectionInstructions.push([
+    ol.render.canvas.Instruction.SET_FILL_STYLE,
+    ol.color.asString(ol.render.canvas.defaultFillStyle)]
+                                    );
   if (state.strokeStyle !== undefined) {
-    this.hitDetectionInstructions.push(
-        [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-         state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
-         state.miterLimit, state.lineDash]);
+    this.hitDetectionInstructions.push([
+      ol.render.canvas.Instruction.SET_STROKE_STYLE,
+      state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
+      state.miterLimit, state.lineDash
+    ]);
   }
   var ends = polygonGeometry.getEnds();
   var flatCoordinates = polygonGeometry.getOrientedFlatCoordinates();
@@ -27031,14 +27290,16 @@ ol.render.canvas.PolygonReplay.prototype.drawMultiPolygon = function(multiPolygo
   this.setFillStrokeStyles_(multiPolygonGeometry);
   this.beginGeometry(multiPolygonGeometry, feature);
   // always fill the multi-polygon for hit detection
-  this.hitDetectionInstructions.push(
-      [ol.render.canvas.Instruction.SET_FILL_STYLE,
-       ol.color.asString(ol.render.canvas.defaultFillStyle)]);
+  this.hitDetectionInstructions.push([
+    ol.render.canvas.Instruction.SET_FILL_STYLE,
+    ol.color.asString(ol.render.canvas.defaultFillStyle)
+  ]);
   if (state.strokeStyle !== undefined) {
-    this.hitDetectionInstructions.push(
-        [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-         state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
-         state.miterLimit, state.lineDash]);
+    this.hitDetectionInstructions.push([
+      ol.render.canvas.Instruction.SET_STROKE_STYLE,
+      state.strokeStyle, state.lineWidth, state.lineCap, state.lineJoin,
+      state.miterLimit, state.lineDash
+    ]);
   }
   var endss = multiPolygonGeometry.getEndss();
   var flatCoordinates = multiPolygonGeometry.getOrientedFlatCoordinates();
@@ -27176,9 +27437,10 @@ ol.render.canvas.PolygonReplay.prototype.setFillStrokeStyles_ = function(geometr
         state.currentLineJoin != lineJoin ||
         state.currentLineWidth != lineWidth ||
         state.currentMiterLimit != miterLimit) {
-      this.instructions.push(
-          [ol.render.canvas.Instruction.SET_STROKE_STYLE,
-           strokeStyle, lineWidth, lineCap, lineJoin, miterLimit, lineDash]);
+      this.instructions.push([
+        ol.render.canvas.Instruction.SET_STROKE_STYLE,
+        strokeStyle, lineWidth, lineCap, lineJoin, miterLimit, lineDash
+      ]);
       state.currentStrokeStyle = strokeStyle;
       state.currentLineCap = lineCap;
       state.currentLineDash = lineDash;
@@ -30970,7 +31232,9 @@ ol.renderer.canvas.VectorTileLayer.prototype.renderTileReplays_ = function(
   var alpha = replayContext.globalAlpha;
   replayContext.globalAlpha = layerState.opacity;
 
+  /** @type {Array.<ol.VectorTile>} */
   var tilesToDraw = this.renderedTiles;
+
   var tileGrid = source.getTileGrid();
 
   var currentZ, i, ii, offsetX, offsetY, origin, pixelSpace, replayState;
@@ -31116,7 +31380,9 @@ ol.renderer.canvas.VectorTileLayer.prototype.forEachFeatureAtCoordinate = functi
   /** @type {Object.<string, boolean>} */
   var features = {};
 
+  /** @type {Array.<ol.VectorTile>} */
   var replayables = this.renderedTiles;
+
   var source = /** @type {ol.source.VectorTile} */ (layer.getSource());
   var tileGrid = source.getTileGrid();
   var found, tileSpaceCoordinate;
@@ -36470,6 +36736,7 @@ ol.Map.prototype.addOverlayInternal_ = function(overlay) {
 
 
 /**
+ * Deprecated (use {@link ol.View#animate} instead).
  * Add functions to be called before rendering. This can be used for attaching
  * animations before updating the map's view.  The {@link ol.animation}
  * namespace provides several static methods for creating prerender functions.
@@ -36477,6 +36744,7 @@ ol.Map.prototype.addOverlayInternal_ = function(overlay) {
  * @api
  */
 ol.Map.prototype.beforeRender = function(var_args) {
+  ol.DEBUG && console.warn('map.beforeRender() is deprecated.  Use view.animate() instead.');
   this.render();
   Array.prototype.push.apply(this.preRenderFunctions_, arguments);
 };
@@ -37514,7 +37782,6 @@ goog.provide('ol.Overlay');
 goog.require('ol');
 goog.require('ol.MapEvent');
 goog.require('ol.Object');
-goog.require('ol.animation');
 goog.require('ol.dom');
 goog.require('ol.events');
 goog.require('ol.extent');
@@ -37580,10 +37847,10 @@ ol.Overlay = function(options) {
 
   /**
    * @private
-   * @type {olx.animation.PanOptions}
+   * @type {olx.OverlayPanOptions}
    */
-  this.autoPanAnimation_ = options.autoPanAnimation !== undefined ?
-      options.autoPanAnimation : /** @type {olx.animation.PanOptions} */ ({});
+  this.autoPanAnimation_ = options.autoPanAnimation ||
+      /** @type {olx.OverlayPanOptions} */ ({});
 
   /**
    * @private
@@ -37891,11 +38158,11 @@ ol.Overlay.prototype.panIntoView_ = function() {
         centerPx[1] + delta[1]
       ];
 
-      if (this.autoPanAnimation_) {
-        this.autoPanAnimation_.source = center;
-        map.beforeRender(ol.animation.pan(this.autoPanAnimation_));
-      }
-      map.getView().setCenter(map.getCoordinateFromPixel(newCenterPx));
+      map.getView().animate({
+        center: map.getCoordinateFromPixel(newCenterPx),
+        duration: this.autoPanAnimation_.duration,
+        easing: this.autoPanAnimation_.easing
+      });
     }
   }
 };
@@ -38871,7 +39138,6 @@ goog.provide('ol.control.ZoomSlider');
 
 goog.require('ol');
 goog.require('ol.View');
-goog.require('ol.animation');
 goog.require('ol.control.Control');
 goog.require('ol.css');
 goog.require('ol.easing');
@@ -39100,19 +39366,19 @@ ol.control.ZoomSlider.render = function(mapEvent) {
  * @private
  */
 ol.control.ZoomSlider.prototype.handleContainerClick_ = function(event) {
-  var map = this.getMap();
-  var view = map.getView();
-  var currentResolution = view.getResolution();
-  map.beforeRender(ol.animation.zoom({
-    resolution: /** @type {number} */ (currentResolution),
-    duration: this.duration_,
-    easing: ol.easing.easeOut
-  }));
+  var view = this.getMap().getView();
+
   var relativePosition = this.getRelativePosition_(
       event.offsetX - this.thumbSize_[0] / 2,
       event.offsetY - this.thumbSize_[1] / 2);
+
   var resolution = this.getResolutionForPosition_(relativePosition);
-  view.setResolution(view.constrainResolution(resolution));
+
+  view.animate({
+    resolution: view.constrainResolution(resolution),
+    duration: this.duration_,
+    easing: ol.easing.easeOut
+  });
 };
 
 
@@ -39173,16 +39439,15 @@ ol.control.ZoomSlider.prototype.handleDraggerDrag_ = function(event) {
  */
 ol.control.ZoomSlider.prototype.handleDraggerEnd_ = function(event) {
   if (this.dragging_) {
-    var map = this.getMap();
-    var view = map.getView();
+    var view = this.getMap().getView();
     view.setHint(ol.View.Hint.INTERACTING, -1);
-    map.beforeRender(ol.animation.zoom({
-      resolution: /** @type {number} */ (this.currentResolution_),
+
+    view.animate({
+      resolution: view.constrainResolution(this.currentResolution_),
       duration: this.duration_,
       easing: ol.easing.easeOut
-    }));
-    var resolution = view.constrainResolution(this.currentResolution_);
-    view.setResolution(resolution);
+    });
+
     this.dragging_ = false;
     this.previousX_ = undefined;
     this.previousY_ = undefined;
@@ -40424,7 +40689,6 @@ ol.xml.pushSerializeAndPop = function(object,
 goog.provide('ol.featureloader');
 
 goog.require('ol');
-goog.require('ol.Tile');
 goog.require('ol.format.FormatType');
 goog.require('ol.xml');
 
@@ -40489,35 +40753,6 @@ ol.featureloader.loadFeaturesXhr = function(url, format, success, failure) {
           }
         }.bind(this);
         xhr.send();
-      });
-};
-
-
-/**
- * Create an XHR feature loader for a `url` and `format`. The feature loader
- * loads features (with XHR), parses the features, and adds them to the
- * vector tile.
- * @param {string|ol.FeatureUrlFunction} url Feature URL service.
- * @param {ol.format.Feature} format Feature format.
- * @return {ol.FeatureLoader} The feature loader.
- * @api
- */
-ol.featureloader.tile = function(url, format) {
-  return ol.featureloader.loadFeaturesXhr(url, format,
-      /**
-       * @param {Array.<ol.Feature>} features The loaded features.
-       * @param {ol.proj.Projection} dataProjection Data projection.
-       * @this {ol.VectorTile}
-       */
-      function(features, dataProjection) {
-        this.setProjection(dataProjection);
-        this.setFeatures(features);
-      },
-      /**
-       * @this {ol.VectorTile}
-       */
-      function() {
-        this.setState(ol.Tile.State.ERROR);
       });
 };
 
@@ -49927,6 +50162,10 @@ ol.format.KML = function(opt_options) {
 
   ol.format.XMLFeature.call(this);
 
+  if (!ol.format.KML.DEFAULT_STYLE_ARRAY_) {
+    ol.format.KML.createStyleDefaults_();
+  }
+
   /**
    * @inheritDoc
    */
@@ -49937,8 +50176,7 @@ ol.format.KML = function(opt_options) {
    * @type {Array.<ol.style.Style>}
    */
   this.defaultStyle_ = options.defaultStyle ?
-      options.defaultStyle :
-      (ol.format.KML.DEFAULT_STYLE_ARRAY_ || ol.format.KML.createStyleDefaults_());
+      options.defaultStyle : ol.format.KML.DEFAULT_STYLE_ARRAY_;
 
   /**
    * @private
@@ -52830,6 +53068,92 @@ var define;
  * @suppress {accessControls, ambiguousFunctionDecl, checkDebuggerStatement, checkRegExp, checkTypes, checkVars, const, constantProperty, deprecated, duplicate, es5Strict, fileoverviewTags, missingProperties, nonStandardJsDocs, strictModuleDepCheck, suspiciousCode, undefinedNames, undefinedVars, unknownDefines, uselessCode, visibility}
  */
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.pbf = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
+exports.read = function (buffer, offset, isLE, mLen, nBytes) {
+  var e, m
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var nBits = -7
+  var i = isLE ? (nBytes - 1) : 0
+  var d = isLE ? -1 : 1
+  var s = buffer[offset + i]
+
+  i += d
+
+  e = s & ((1 << (-nBits)) - 1)
+  s >>= (-nBits)
+  nBits += eLen
+  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+
+  m = e & ((1 << (-nBits)) - 1)
+  e >>= (-nBits)
+  nBits += mLen
+  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+
+  if (e === 0) {
+    e = 1 - eBias
+  } else if (e === eMax) {
+    return m ? NaN : ((s ? -1 : 1) * Infinity)
+  } else {
+    m = m + Math.pow(2, mLen)
+    e = e - eBias
+  }
+  return (s ? -1 : 1) * m * Math.pow(2, e - mLen)
+}
+
+exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
+  var e, m, c
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
+  var i = isLE ? 0 : (nBytes - 1)
+  var d = isLE ? 1 : -1
+  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+
+  value = Math.abs(value)
+
+  if (isNaN(value) || value === Infinity) {
+    m = isNaN(value) ? 1 : 0
+    e = eMax
+  } else {
+    e = Math.floor(Math.log(value) / Math.LN2)
+    if (value * (c = Math.pow(2, -e)) < 1) {
+      e--
+      c *= 2
+    }
+    if (e + eBias >= 1) {
+      value += rt / c
+    } else {
+      value += rt * Math.pow(2, 1 - eBias)
+    }
+    if (value * c >= 2) {
+      e++
+      c /= 2
+    }
+
+    if (e + eBias >= eMax) {
+      m = 0
+      e = eMax
+    } else if (e + eBias >= 1) {
+      m = (value * c - 1) * Math.pow(2, mLen)
+      e = e + eBias
+    } else {
+      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
+      e = 0
+    }
+  }
+
+  for (; mLen >= 8; buffer[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
+
+  e = (e << mLen) | m
+  eLen += mLen
+  for (; eLen > 0; buffer[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
+
+  buffer[offset + i - d] |= s * 128
+}
+
+},{}],2:[function(_dereq_,module,exports){
 'use strict';
 
 module.exports = Pbf;
@@ -53449,93 +53773,7 @@ function writeUtf8(buf, str, pos) {
     return pos;
 }
 
-},{"ieee754":2}],2:[function(_dereq_,module,exports){
-exports.read = function (buffer, offset, isLE, mLen, nBytes) {
-  var e, m
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var nBits = -7
-  var i = isLE ? (nBytes - 1) : 0
-  var d = isLE ? -1 : 1
-  var s = buffer[offset + i]
-
-  i += d
-
-  e = s & ((1 << (-nBits)) - 1)
-  s >>= (-nBits)
-  nBits += eLen
-  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
-
-  m = e & ((1 << (-nBits)) - 1)
-  e >>= (-nBits)
-  nBits += mLen
-  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
-
-  if (e === 0) {
-    e = 1 - eBias
-  } else if (e === eMax) {
-    return m ? NaN : ((s ? -1 : 1) * Infinity)
-  } else {
-    m = m + Math.pow(2, mLen)
-    e = e - eBias
-  }
-  return (s ? -1 : 1) * m * Math.pow(2, e - mLen)
-}
-
-exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
-  var e, m, c
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
-  var i = isLE ? 0 : (nBytes - 1)
-  var d = isLE ? 1 : -1
-  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
-
-  value = Math.abs(value)
-
-  if (isNaN(value) || value === Infinity) {
-    m = isNaN(value) ? 1 : 0
-    e = eMax
-  } else {
-    e = Math.floor(Math.log(value) / Math.LN2)
-    if (value * (c = Math.pow(2, -e)) < 1) {
-      e--
-      c *= 2
-    }
-    if (e + eBias >= 1) {
-      value += rt / c
-    } else {
-      value += rt * Math.pow(2, 1 - eBias)
-    }
-    if (value * c >= 2) {
-      e++
-      c /= 2
-    }
-
-    if (e + eBias >= eMax) {
-      m = 0
-      e = eMax
-    } else if (e + eBias >= 1) {
-      m = (value * c - 1) * Math.pow(2, mLen)
-      e = e + eBias
-    } else {
-      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
-      e = 0
-    }
-  }
-
-  for (; mLen >= 8; buffer[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
-
-  e = (e << mLen) | m
-  eLen += mLen
-  for (; eLen > 0; buffer[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
-
-  buffer[offset + i - d] |= s * 128
-}
-
-},{}]},{},[1])(1)
+},{"ieee754":1}]},{},[2])(2)
 });
 ol.ext.pbf = module.exports;
 })();
@@ -53552,11 +53790,144 @@ var define;
  * @suppress {accessControls, ambiguousFunctionDecl, checkDebuggerStatement, checkRegExp, checkTypes, checkVars, const, constantProperty, deprecated, duplicate, es5Strict, fileoverviewTags, missingProperties, nonStandardJsDocs, strictModuleDepCheck, suspiciousCode, undefinedNames, undefinedVars, unknownDefines, uselessCode, visibility}
  */
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.vectortile = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
+'use strict';
+
+module.exports = Point;
+
+function Point(x, y) {
+    this.x = x;
+    this.y = y;
+}
+
+Point.prototype = {
+    clone: function() { return new Point(this.x, this.y); },
+
+    add:     function(p) { return this.clone()._add(p);     },
+    sub:     function(p) { return this.clone()._sub(p);     },
+    mult:    function(k) { return this.clone()._mult(k);    },
+    div:     function(k) { return this.clone()._div(k);     },
+    rotate:  function(a) { return this.clone()._rotate(a);  },
+    matMult: function(m) { return this.clone()._matMult(m); },
+    unit:    function() { return this.clone()._unit(); },
+    perp:    function() { return this.clone()._perp(); },
+    round:   function() { return this.clone()._round(); },
+
+    mag: function() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+    },
+
+    equals: function(p) {
+        return this.x === p.x &&
+               this.y === p.y;
+    },
+
+    dist: function(p) {
+        return Math.sqrt(this.distSqr(p));
+    },
+
+    distSqr: function(p) {
+        var dx = p.x - this.x,
+            dy = p.y - this.y;
+        return dx * dx + dy * dy;
+    },
+
+    angle: function() {
+        return Math.atan2(this.y, this.x);
+    },
+
+    angleTo: function(b) {
+        return Math.atan2(this.y - b.y, this.x - b.x);
+    },
+
+    angleWith: function(b) {
+        return this.angleWithSep(b.x, b.y);
+    },
+
+    // Find the angle of the two vectors, solving the formula for the cross product a x b = |a||b|sin(θ) for θ.
+    angleWithSep: function(x, y) {
+        return Math.atan2(
+            this.x * y - this.y * x,
+            this.x * x + this.y * y);
+    },
+
+    _matMult: function(m) {
+        var x = m[0] * this.x + m[1] * this.y,
+            y = m[2] * this.x + m[3] * this.y;
+        this.x = x;
+        this.y = y;
+        return this;
+    },
+
+    _add: function(p) {
+        this.x += p.x;
+        this.y += p.y;
+        return this;
+    },
+
+    _sub: function(p) {
+        this.x -= p.x;
+        this.y -= p.y;
+        return this;
+    },
+
+    _mult: function(k) {
+        this.x *= k;
+        this.y *= k;
+        return this;
+    },
+
+    _div: function(k) {
+        this.x /= k;
+        this.y /= k;
+        return this;
+    },
+
+    _unit: function() {
+        this._div(this.mag());
+        return this;
+    },
+
+    _perp: function() {
+        var y = this.y;
+        this.y = this.x;
+        this.x = -y;
+        return this;
+    },
+
+    _rotate: function(angle) {
+        var cos = Math.cos(angle),
+            sin = Math.sin(angle),
+            x = cos * this.x - sin * this.y,
+            y = sin * this.x + cos * this.y;
+        this.x = x;
+        this.y = y;
+        return this;
+    },
+
+    _round: function() {
+        this.x = Math.round(this.x);
+        this.y = Math.round(this.y);
+        return this;
+    }
+};
+
+// constructs Point from an array if necessary
+Point.convert = function (a) {
+    if (a instanceof Point) {
+        return a;
+    }
+    if (Array.isArray(a)) {
+        return new Point(a[0], a[1]);
+    }
+    return a;
+};
+
+},{}],2:[function(_dereq_,module,exports){
 module.exports.VectorTile = _dereq_('./lib/vectortile.js');
 module.exports.VectorTileFeature = _dereq_('./lib/vectortilefeature.js');
 module.exports.VectorTileLayer = _dereq_('./lib/vectortilelayer.js');
 
-},{"./lib/vectortile.js":2,"./lib/vectortilefeature.js":3,"./lib/vectortilelayer.js":4}],2:[function(_dereq_,module,exports){
+},{"./lib/vectortile.js":3,"./lib/vectortilefeature.js":4,"./lib/vectortilelayer.js":5}],3:[function(_dereq_,module,exports){
 'use strict';
 
 var VectorTileLayer = _dereq_('./vectortilelayer');
@@ -53575,7 +53946,7 @@ function readTile(tag, layers, pbf) {
 }
 
 
-},{"./vectortilelayer":4}],3:[function(_dereq_,module,exports){
+},{"./vectortilelayer":5}],4:[function(_dereq_,module,exports){
 'use strict';
 
 var Point = _dereq_('point-geometry');
@@ -53810,7 +54181,7 @@ function signedArea(ring) {
     return sum;
 }
 
-},{"point-geometry":5}],4:[function(_dereq_,module,exports){
+},{"point-geometry":1}],5:[function(_dereq_,module,exports){
 'use strict';
 
 var VectorTileFeature = _dereq_('./vectortilefeature.js');
@@ -53873,140 +54244,7 @@ VectorTileLayer.prototype.feature = function(i) {
     return new VectorTileFeature(this._pbf, end, this.extent, this._keys, this._values);
 };
 
-},{"./vectortilefeature.js":3}],5:[function(_dereq_,module,exports){
-'use strict';
-
-module.exports = Point;
-
-function Point(x, y) {
-    this.x = x;
-    this.y = y;
-}
-
-Point.prototype = {
-    clone: function() { return new Point(this.x, this.y); },
-
-    add:     function(p) { return this.clone()._add(p);     },
-    sub:     function(p) { return this.clone()._sub(p);     },
-    mult:    function(k) { return this.clone()._mult(k);    },
-    div:     function(k) { return this.clone()._div(k);     },
-    rotate:  function(a) { return this.clone()._rotate(a);  },
-    matMult: function(m) { return this.clone()._matMult(m); },
-    unit:    function() { return this.clone()._unit(); },
-    perp:    function() { return this.clone()._perp(); },
-    round:   function() { return this.clone()._round(); },
-
-    mag: function() {
-        return Math.sqrt(this.x * this.x + this.y * this.y);
-    },
-
-    equals: function(p) {
-        return this.x === p.x &&
-               this.y === p.y;
-    },
-
-    dist: function(p) {
-        return Math.sqrt(this.distSqr(p));
-    },
-
-    distSqr: function(p) {
-        var dx = p.x - this.x,
-            dy = p.y - this.y;
-        return dx * dx + dy * dy;
-    },
-
-    angle: function() {
-        return Math.atan2(this.y, this.x);
-    },
-
-    angleTo: function(b) {
-        return Math.atan2(this.y - b.y, this.x - b.x);
-    },
-
-    angleWith: function(b) {
-        return this.angleWithSep(b.x, b.y);
-    },
-
-    // Find the angle of the two vectors, solving the formula for the cross product a x b = |a||b|sin(θ) for θ.
-    angleWithSep: function(x, y) {
-        return Math.atan2(
-            this.x * y - this.y * x,
-            this.x * x + this.y * y);
-    },
-
-    _matMult: function(m) {
-        var x = m[0] * this.x + m[1] * this.y,
-            y = m[2] * this.x + m[3] * this.y;
-        this.x = x;
-        this.y = y;
-        return this;
-    },
-
-    _add: function(p) {
-        this.x += p.x;
-        this.y += p.y;
-        return this;
-    },
-
-    _sub: function(p) {
-        this.x -= p.x;
-        this.y -= p.y;
-        return this;
-    },
-
-    _mult: function(k) {
-        this.x *= k;
-        this.y *= k;
-        return this;
-    },
-
-    _div: function(k) {
-        this.x /= k;
-        this.y /= k;
-        return this;
-    },
-
-    _unit: function() {
-        this._div(this.mag());
-        return this;
-    },
-
-    _perp: function() {
-        var y = this.y;
-        this.y = this.x;
-        this.x = -y;
-        return this;
-    },
-
-    _rotate: function(angle) {
-        var cos = Math.cos(angle),
-            sin = Math.sin(angle),
-            x = cos * this.x - sin * this.y,
-            y = sin * this.x + cos * this.y;
-        this.x = x;
-        this.y = y;
-        return this;
-    },
-
-    _round: function() {
-        this.x = Math.round(this.x);
-        this.y = Math.round(this.y);
-        return this;
-    }
-};
-
-// constructs Point from an array if necessary
-Point.convert = function (a) {
-    if (a instanceof Point) {
-        return a;
-    }
-    if (Array.isArray(a)) {
-        return new Point(a[0], a[1]);
-    }
-    return a;
-};
-
-},{}]},{},[1])(1)
+},{"./vectortilefeature.js":4}]},{},[2])(2)
 });
 ol.ext.vectortile = module.exports;
 })();
@@ -61268,6 +61506,68 @@ var define;
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.rbush = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
 'use strict';
 
+module.exports = partialSort;
+
+// Floyd-Rivest selection algorithm:
+// Rearrange items so that all items in the [left, k] range are smaller than all items in (k, right];
+// The k-th element will have the (k - left + 1)th smallest value in [left, right]
+
+function partialSort(arr, k, left, right, compare) {
+    left = left || 0;
+    right = right || (arr.length - 1);
+    compare = compare || defaultCompare;
+
+    while (right > left) {
+        if (right - left > 600) {
+            var n = right - left + 1;
+            var m = k - left + 1;
+            var z = Math.log(n);
+            var s = 0.5 * Math.exp(2 * z / 3);
+            var sd = 0.5 * Math.sqrt(z * s * (n - s) / n) * (m - n / 2 < 0 ? -1 : 1);
+            var newLeft = Math.max(left, Math.floor(k - m * s / n + sd));
+            var newRight = Math.min(right, Math.floor(k + (n - m) * s / n + sd));
+            partialSort(arr, k, newLeft, newRight, compare);
+        }
+
+        var t = arr[k];
+        var i = left;
+        var j = right;
+
+        swap(arr, left, k);
+        if (compare(arr[right], t) > 0) swap(arr, left, right);
+
+        while (i < j) {
+            swap(arr, i, j);
+            i++;
+            j--;
+            while (compare(arr[i], t) < 0) i++;
+            while (compare(arr[j], t) > 0) j--;
+        }
+
+        if (compare(arr[left], t) === 0) swap(arr, left, j);
+        else {
+            j++;
+            swap(arr, j, right);
+        }
+
+        if (j <= k) left = j + 1;
+        if (k <= j) right = j - 1;
+    }
+}
+
+function swap(arr, i, j) {
+    var tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+}
+
+function defaultCompare(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+},{}],2:[function(_dereq_,module,exports){
+'use strict';
+
 module.exports = rbush;
 
 var quickselect = _dereq_('quickselect');
@@ -61828,69 +62128,7 @@ function multiSelect(arr, left, right, n, compare) {
     }
 }
 
-},{"quickselect":2}],2:[function(_dereq_,module,exports){
-'use strict';
-
-module.exports = partialSort;
-
-// Floyd-Rivest selection algorithm:
-// Rearrange items so that all items in the [left, k] range are smaller than all items in (k, right];
-// The k-th element will have the (k - left + 1)th smallest value in [left, right]
-
-function partialSort(arr, k, left, right, compare) {
-    left = left || 0;
-    right = right || (arr.length - 1);
-    compare = compare || defaultCompare;
-
-    while (right > left) {
-        if (right - left > 600) {
-            var n = right - left + 1;
-            var m = k - left + 1;
-            var z = Math.log(n);
-            var s = 0.5 * Math.exp(2 * z / 3);
-            var sd = 0.5 * Math.sqrt(z * s * (n - s) / n) * (m - n / 2 < 0 ? -1 : 1);
-            var newLeft = Math.max(left, Math.floor(k - m * s / n + sd));
-            var newRight = Math.min(right, Math.floor(k + (n - m) * s / n + sd));
-            partialSort(arr, k, newLeft, newRight, compare);
-        }
-
-        var t = arr[k];
-        var i = left;
-        var j = right;
-
-        swap(arr, left, k);
-        if (compare(arr[right], t) > 0) swap(arr, left, right);
-
-        while (i < j) {
-            swap(arr, i, j);
-            i++;
-            j--;
-            while (compare(arr[i], t) < 0) i++;
-            while (compare(arr[j], t) > 0) j--;
-        }
-
-        if (compare(arr[left], t) === 0) swap(arr, left, j);
-        else {
-            j++;
-            swap(arr, j, right);
-        }
-
-        if (j <= k) left = j + 1;
-        if (k <= j) right = j - 1;
-    }
-}
-
-function swap(arr, i, j) {
-    var tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
-}
-
-function defaultCompare(a, b) {
-    return a < b ? -1 : a > b ? 1 : 0;
-}
-
-},{}]},{},[1])(1)
+},{"quickselect":1}]},{},[2])(2)
 });
 ol.ext.rbush = module.exports;
 })();
@@ -63426,6 +63664,7 @@ ol.interaction.Draw.handleUpEvent_ = function(event) {
   var shouldHandle = this.freehand_ ?
       squaredDistance > this.squaredClickTolerance_ :
       squaredDistance <= this.squaredClickTolerance_;
+  var circleMode = this.mode_ === ol.interaction.Draw.Mode.CIRCLE;
   if (shouldHandle) {
     this.handlePointerMove_(event);
     if (!this.finishCoordinate_) {
@@ -63433,7 +63672,7 @@ ol.interaction.Draw.handleUpEvent_ = function(event) {
       if (this.mode_ === ol.interaction.Draw.Mode.POINT) {
         this.finishDrawing();
       }
-    } else if (this.freehand_ || this.mode_ === ol.interaction.Draw.Mode.CIRCLE) {
+    } else if (this.freehand_ || circleMode) {
       this.finishDrawing();
     } else if (this.atFinish_(event)) {
       if (this.finishCondition_(event)) {
@@ -63443,6 +63682,8 @@ ol.interaction.Draw.handleUpEvent_ = function(event) {
       this.addToDrawing_(event);
     }
     pass = false;
+  } else if (circleMode) {
+    this.finishCoordinate_ = null;
   }
   return pass;
 };
@@ -65130,11 +65371,9 @@ ol.interaction.Modify.prototype.handlePointerAtPixel_ = function(pixel, map) {
         ol.coordinate.squaredDistanceToSegment(pixelCoordinate, b.segment);
   };
 
-  var lowerLeft = map.getCoordinateFromPixel(
-      [pixel[0] - this.pixelTolerance_, pixel[1] + this.pixelTolerance_]);
-  var upperRight = map.getCoordinateFromPixel(
-      [pixel[0] + this.pixelTolerance_, pixel[1] - this.pixelTolerance_]);
-  var box = ol.extent.boundingExtent([lowerLeft, upperRight]);
+  var box = ol.extent.buffer(
+      ol.extent.createOrUpdateFromCoordinate(pixelCoordinate),
+      map.getView().getResolution() * this.pixelTolerance_);
 
   var rBush = this.rBush_;
   var nodes = rBush.getInExtent(box);
@@ -66504,6 +66743,7 @@ ol.interaction.Snap.sortByDistance = function(a, b) {
 goog.provide('ol.interaction.Translate');
 
 goog.require('ol');
+goog.require('ol.Collection');
 goog.require('ol.events.Event');
 goog.require('ol.functions');
 goog.require('ol.array');
@@ -66517,10 +66757,10 @@ goog.require('ol.interaction.Pointer');
  * @constructor
  * @extends {ol.interaction.Pointer}
  * @fires ol.interaction.Translate.Event
- * @param {olx.interaction.TranslateOptions} options Options.
+ * @param {olx.interaction.TranslateOptions=} opt_options Options.
  * @api
  */
-ol.interaction.Translate = function(options) {
+ol.interaction.Translate = function(opt_options) {
   ol.interaction.Pointer.call(this, {
     handleDownEvent: ol.interaction.Translate.handleDownEvent_,
     handleDragEvent: ol.interaction.Translate.handleDragEvent_,
@@ -66528,6 +66768,7 @@ ol.interaction.Translate = function(options) {
     handleUpEvent: ol.interaction.Translate.handleUpEvent_
   });
 
+  var options = opt_options ? opt_options : {};
 
   /**
    * @type {string|undefined}
@@ -66591,9 +66832,12 @@ ol.interaction.Translate.handleDownEvent_ = function(event) {
   if (!this.lastCoordinate_ && this.lastFeature_) {
     this.lastCoordinate_ = event.coordinate;
     ol.interaction.Translate.handleMoveEvent_.call(this, event);
+
+    var features = this.features_ || new ol.Collection([this.lastFeature_]);
+
     this.dispatchEvent(
         new ol.interaction.Translate.Event(
-            ol.interaction.Translate.EventType.TRANSLATESTART, this.features_,
+            ol.interaction.Translate.EventType.TRANSLATESTART, features,
             event.coordinate));
     return true;
   }
@@ -66611,9 +66855,12 @@ ol.interaction.Translate.handleUpEvent_ = function(event) {
   if (this.lastCoordinate_) {
     this.lastCoordinate_ = null;
     ol.interaction.Translate.handleMoveEvent_.call(this, event);
+
+    var features = this.features_ || new ol.Collection([this.lastFeature_]);
+
     this.dispatchEvent(
         new ol.interaction.Translate.Event(
-            ol.interaction.Translate.EventType.TRANSLATEEND, this.features_,
+            ol.interaction.Translate.EventType.TRANSLATEEND, features,
             event.coordinate));
     return true;
   }
@@ -66632,22 +66879,18 @@ ol.interaction.Translate.handleDragEvent_ = function(event) {
     var deltaX = newCoordinate[0] - this.lastCoordinate_[0];
     var deltaY = newCoordinate[1] - this.lastCoordinate_[1];
 
-    if (this.features_) {
-      this.features_.forEach(function(feature) {
-        var geom = feature.getGeometry();
-        geom.translate(deltaX, deltaY);
-        feature.setGeometry(geom);
-      });
-    } else if (this.lastFeature_) {
-      var geom = this.lastFeature_.getGeometry();
+    var features = this.features_ || new ol.Collection([this.lastFeature_]);
+
+    features.forEach(function(feature) {
+      var geom = feature.getGeometry();
       geom.translate(deltaX, deltaY);
-      this.lastFeature_.setGeometry(geom);
-    }
+      feature.setGeometry(geom);
+    });
 
     this.lastCoordinate_ = newCoordinate;
     this.dispatchEvent(
         new ol.interaction.Translate.Event(
-            ol.interaction.Translate.EventType.TRANSLATING, this.features_,
+            ol.interaction.Translate.EventType.TRANSLATING, features,
             newCoordinate));
   }
 };
@@ -66690,19 +66933,13 @@ ol.interaction.Translate.handleMoveEvent_ = function(event) {
  * @private
  */
 ol.interaction.Translate.prototype.featuresAtPixel_ = function(pixel, map) {
-  var found = null;
-
-  var intersectingFeature = map.forEachFeatureAtPixel(pixel,
+  return map.forEachFeatureAtPixel(pixel,
       function(feature) {
-        return feature;
+        if (!this.features_ ||
+            ol.array.includes(this.features_.getArray(), feature)) {
+          return feature;
+        }
       }, this, this.layerFilter_);
-
-  if (this.features_ &&
-      ol.array.includes(this.features_.getArray(), intersectingFeature)) {
-    found = intersectingFeature;
-  }
-
-  return found;
 };
 
 
@@ -68604,6 +68841,12 @@ goog.require('ol.tilegrid');
  */
 ol.source.BingMaps = function(options) {
 
+  /**
+   * @private
+   * @type {boolean}
+   */
+  this.hidpi_ = options.hidpi !== undefined ? options.hidpi : false;
+
   ol.source.TileImage.call(this, {
     cacheSize: options.cacheSize,
     crossOrigin: 'anonymous',
@@ -68612,6 +68855,7 @@ ol.source.BingMaps = function(options) {
     reprojectionErrorThreshold: options.reprojectionErrorThreshold,
     state: ol.source.State.LOADING,
     tileLoadFunction: options.tileLoadFunction,
+    tilePixelRatio: this.hidpi_ ? 2 : 1,
     wrapX: options.wrapX !== undefined ? options.wrapX : true
   });
 
@@ -68718,11 +68962,12 @@ ol.source.BingMaps.prototype.handleImageryMetadataResponse = function(response) 
     extent: extent,
     minZoom: resource.zoomMin,
     maxZoom: maxZoom,
-    tileSize: tileSize
+    tileSize: tileSize / this.getTilePixelRatio()
   });
   this.tileGrid = tileGrid;
 
   var culture = this.culture_;
+  var hidpi = this.hidpi_;
   this.tileUrlFunction = ol.TileUrlFunction.createFromTileUrlFunctions(
       resource.imageUrlSubdomains.map(function(subdomain) {
         var quadKeyTileCoord = [0, 0, 0];
@@ -68745,7 +68990,11 @@ ol.source.BingMaps.prototype.handleImageryMetadataResponse = function(response) 
               } else {
                 ol.tilecoord.createOrUpdate(tileCoord[0], tileCoord[1],
                     -tileCoord[2] - 1, quadKeyTileCoord);
-                return imageUrl.replace('{quadkey}', ol.tilecoord.quadKey(
+                var url = imageUrl;
+                if (hidpi) {
+                  url += '&dpi=d1&device=mobile';
+                }
+                return url.replace('{quadkey}', ol.tilecoord.quadKey(
                     quadKeyTileCoord));
               }
             });
@@ -72609,6 +72858,7 @@ goog.provide('ol.VectorTile');
 goog.require('ol');
 goog.require('ol.Tile');
 goog.require('ol.dom');
+goog.require('ol.featureloader');
 
 
 /**
@@ -72756,6 +73006,25 @@ ol.VectorTile.prototype.load = function() {
 
 
 /**
+ * Handler for successful tile load.
+ * @param {Array.<ol.Feature>} features The loaded features.
+ * @param {ol.proj.Projection} dataProjection Data projection.
+ */
+ol.VectorTile.prototype.onLoad_ = function(features, dataProjection) {
+  this.setProjection(dataProjection);
+  this.setFeatures(features);
+};
+
+
+/**
+ * Handler for tile load errors.
+ */
+ol.VectorTile.prototype.onError_ = function() {
+  this.setState(ol.Tile.State.ERROR);
+};
+
+
+/**
  * @param {Array.<ol.Feature>} features Features.
  * @api
  */
@@ -72793,6 +73062,19 @@ ol.VectorTile.prototype.setLoader = function(loader) {
   this.loader_ = loader;
 };
 
+
+/**
+ * Sets the loader for a tile.
+ * @param {ol.VectorTile} tile Vector tile.
+ * @param {string} url URL.
+ */
+ol.VectorTile.defaultLoadFunction = function(tile, url) {
+  var loader = ol.featureloader.loadFeaturesXhr(
+      url, tile.getFormat(), tile.onLoad_.bind(tile), tile.onError_.bind(tile));
+
+  tile.setLoader(loader);
+};
+
 goog.provide('ol.source.VectorTile');
 
 goog.require('ol');
@@ -72800,7 +73082,6 @@ goog.require('ol.Tile');
 goog.require('ol.VectorTile');
 goog.require('ol.events');
 goog.require('ol.events.EventType');
-goog.require('ol.featureloader');
 goog.require('ol.size');
 goog.require('ol.source.UrlTile');
 
@@ -72833,7 +73114,7 @@ ol.source.VectorTile = function(options) {
     state: options.state,
     tileGrid: options.tileGrid,
     tileLoadFunction: options.tileLoadFunction ?
-        options.tileLoadFunction : ol.source.VectorTile.defaultTileLoadFunction,
+        options.tileLoadFunction : ol.VectorTile.defaultLoadFunction,
     tileUrlFunction: options.tileUrlFunction,
     tilePixelRatio: options.tilePixelRatio,
     url: options.url,
@@ -72915,15 +73196,6 @@ ol.source.VectorTile.prototype.getTilePixelRatio = function(opt_pixelRatio) {
 ol.source.VectorTile.prototype.getTilePixelSize = function(z, pixelRatio, projection) {
   var tileSize = ol.size.toSize(this.tileGrid.getTileSize(z));
   return [Math.round(tileSize[0] * pixelRatio), Math.round(tileSize[1] * pixelRatio)];
-};
-
-
-/**
- * @param {ol.VectorTile} vectorTile Vector tile.
- * @param {string} url URL.
- */
-ol.source.VectorTile.defaultTileLoadFunction = function(vectorTile, url) {
-  vectorTile.setLoader(ol.featureloader.tile(url, vectorTile.getFormat()));
 };
 
 goog.provide('ol.tilegrid.WMTS');
@@ -76033,6 +76305,23 @@ ngeo.profile = function(options) {
  */
 goog.provide('ngeo');
 
+// Required by olx
+/** @suppress {extraRequire} */
+goog.require('ol.format.IGC');
+/** @suppress {extraRequire} */
+goog.require('ol.Overlay');
+/** @suppress {extraRequire} */
+goog.require('ol.control.ScaleLine');
+/** @suppress {extraRequire} */
+goog.require('ol.source.WMTS');
+/** @suppress {extraRequire} */
+goog.require('ol.style.Icon');
+/** @suppress {extraRequire} */
+goog.require('ol.layer.VectorTile');
+// Required by ol3
+/** @suppress {extraRequire} */
+goog.require('ol.Map');
+
 
 /** @type {!angular.Module} */
 ngeo.module = angular.module('ngeo', ['gettext', 'ui.date', 'floatThead']);
@@ -76144,645 +76433,6 @@ ngeo.GeometryType = {
    */
   TEXT: 'Text'
 };
-
-goog.provide('ngeo.EventHelper');
-
-goog.require('ngeo');
-
-
-/**
- * Provides methods to manage the listening/unlistening of all sorts of
- * events:
- * - events from OpenLayers
- * - events from Closure Library
- *
- * @constructor
- * @struct
- * @ngdoc service
- * @ngname ngeoEventHelper
- * @ngInject
- */
-ngeo.EventHelper = function() {
-
-  /**
-   * @type {Object.<number|string, ngeo.EventHelper.ListenerKeys>}
-   * @private
-   */
-  this.listenerKeys_ = {};
-
-};
-
-
-/**
- * Utility method to add a listener key bound to a unique id. The key can
- * come from an `ol.events` (default) or `goog.events`.
- * @param {number|string} uid Unique id.
- * @param {ol.EventsKey|goog.events.Key} key Key.
- * @param {boolean=} opt_isol Whether it's an OpenLayers event or not. Defaults
- *     to true.
- * @export
- */
-ngeo.EventHelper.prototype.addListenerKey = function(uid, key, opt_isol) {
-  if (!this.listenerKeys_[uid]) {
-    this.initListenerKey_(uid);
-  }
-
-  var isol = opt_isol !== undefined ? opt_isol : true;
-  if (isol) {
-    this.listenerKeys_[uid].ol.push(/** @type {ol.EventsKey} */ (key));
-  } else {
-    this.listenerKeys_[uid].goog.push(/** @type {goog.events.Key} */ (key));
-  }
-};
-
-
-/**
- * Clear all listener keys from the given unique id.
- * @param {number|string} uid Unique id.
- * @export
- */
-ngeo.EventHelper.prototype.clearListenerKey = function(uid) {
-  this.initListenerKey_(uid);
-};
-
-
-/**
- * Utility method that does 2 things:
- * - initialize the listener keys of a given uid with an array (if that key
- *   has not array set yet)
- * - unlisten any events if the array already exists for the given uid and
- *   empty the array.
- * @param {number|string} uid Unique id.
- * @private
- */
-ngeo.EventHelper.prototype.initListenerKey_ = function(uid) {
-  if (!this.listenerKeys_[uid]) {
-    this.listenerKeys_[uid] = {
-      goog: [],
-      ol: []
-    };
-  } else {
-    if (this.listenerKeys_[uid].goog.length) {
-      this.listenerKeys_[uid].goog.forEach(function(key) {
-        goog.events.unlistenByKey(key);
-      }, this);
-      this.listenerKeys_[uid].goog.length = 0;
-    }
-    if (this.listenerKeys_[uid].ol.length) {
-      this.listenerKeys_[uid].ol.forEach(function(key) {
-        ol.events.unlistenByKey(key);
-      }, this);
-      this.listenerKeys_[uid].ol.length = 0;
-    }
-  }
-};
-
-
-/**
- * @typedef {{
- *     goog: (Array.<goog.events.Key>),
- *     ol: (Array.<ol.EventsKey>)
- * }}
- */
-ngeo.EventHelper.ListenerKeys;
-
-
-ngeo.module.service('ngeoEventHelper', ngeo.EventHelper);
-
-goog.provide('ngeo.AttributesController');
-goog.provide('ngeo.attributesDirective');
-
-goog.require('ngeo');
-goog.require('ngeo.EventHelper');
-
-/**
- * Directive used to render the attributes of a feature into a form.
- * Example:
- *
- *     <ngeo-attributes
- *       ngeo-attributes-attributes="::ctrl.attributes"
- *       ngeo-attributes-disabled="ctrl.attributesDisabled"
- *       ngeo-attributes-feature="::ctrl.feature">
- *     </ngeo-attributes>
- *
- * @htmlAttribute {Array.<ngeox.Attribute>} ngeo-attributes-attributes The
- *     list of attributes to use.
- * @htmlAttribute {boolean} ngeo-attributes-disabled Whether the fieldset should
- *     be disabled or not.
- * @htmlAttribute {ol.Feature} ngeo-attributes-feature The feature.
- * @return {angular.Directive} The directive specs.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoAttributes
- */
-ngeo.attributesDirective = function() {
-  return {
-    controller: 'ngeoAttributesController',
-    scope: true,
-    bindToController: {
-      'attributes': '=ngeoAttributesAttributes',
-      'disabled': '<ngeoAttributesDisabled',
-      'feature': '=ngeoAttributesFeature'
-    },
-    controllerAs: 'attrCtrl',
-    templateUrl: ngeo.baseTemplateUrl + '/attributes.html'
-  };
-};
-
-ngeo.module.directive('ngeoAttributes', ngeo.attributesDirective);
-
-
-/**
- * @param {!angular.Scope} $scope Angular scope.
- * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
- * @constructor
- * @struct
- * @ngInject
- * @ngdoc controller
- * @ngname ngeoAttributesController
- */
-ngeo.AttributesController = function($scope, ngeoEventHelper) {
-
-  /**
-   * The list of attributes to create the form with.
-   * @type {Array.<ngeox.Attribute>}
-   * @export
-   */
-  this.attributes;
-
-  /**
-   * Whether the fieldset should be disabled or not.
-   * @type {boolean}
-   * @export
-   */
-  this.disabled = this.disabled === true;
-
-  /**
-   * The feature containing the values.
-   * @type {ol.Feature}
-   * @export
-   */
-  this.feature;
-
-  /**
-   * The properties bound to the form, initialized with the inner properties
-   * of the feature.
-   * @type {Object.<string, *>}
-   * @export
-   */
-  this.properties = this.feature.getProperties();
-
-  /**
-   * @type {!angular.Scope}
-   * @private
-   */
-  this.scope_ = $scope;
-
-  /**
-   * @type {ngeo.EventHelper}
-   * @private
-   */
-  this.ngeoEventHelper_ = ngeoEventHelper;
-
-  /**
-   * Datepicker options
-   * @type {Object}
-   * @export
-   */
-  this.dateOptions = {
-    'changeMonth': true,
-    'changeYear': true
-  };
-
-  // Listen to the feature inner properties change and apply them to the form
-  var uid = goog.getUid(this);
-  this.ngeoEventHelper_.addListenerKey(
-    uid,
-    ol.events.listen(
-      this.feature,
-      ol.ObjectEventType.PROPERTYCHANGE,
-      this.handleFeaturePropertyChange_,
-      this
-    ),
-    true
-  );
-
-  /**
-   * While changes happen from the form (from the template), they are applied
-   * to the feature inner properties. The 'propertychange' event registered
-   * above does the opposite, i.e. it listens to the feature inner properties
-   * changes and apply them to the form. To prevent circular issues, while
-   * applying changes coming from the form, this flag is set. While set, changes
-   * from the feature inner properties are ignored.
-   * @type {boolean}
-   * @private
-   */
-  this.updating_ = false;
-
-  $scope.$on('$destroy', this.handleDestroy_.bind(this));
-
-};
-
-
-/**
- * Called when an input node value changes
- * @param {string} name Attribute name
- * @export
- */
-ngeo.AttributesController.prototype.handleInputChange = function(name) {
-  this.updating_ = true;
-  var value = this.properties[name];
-  this.feature.set(name, value);
-  this.updating_ = false;
-};
-
-
-/**
- * Cleanup event listeners.
- * @private
- */
-ngeo.AttributesController.prototype.handleDestroy_ = function() {
-  var uid = goog.getUid(this);
-  this.ngeoEventHelper_.clearListenerKey(uid);
-};
-
-
-/**
- * @param {ol.ObjectEvent} evt Event.
- * @private
- */
-ngeo.AttributesController.prototype.handleFeaturePropertyChange_ = function(
-  evt
-) {
-  if (this.updating_) {
-    return;
-  }
-  this.properties[evt.key] = evt.target.get(evt.key);
-  this.scope_.$apply();
-};
-
-
-ngeo.module.controller('ngeoAttributesController', ngeo.AttributesController);
-
-goog.provide('ngeo.LayerHelper');
-
-goog.require('ngeo');
-goog.require('ol.Collection');
-goog.require('ol.array');
-goog.require('ol.format.WMTSCapabilities');
-goog.require('ol.layer.Group');
-goog.require('ol.layer.Image');
-goog.require('ol.layer.Tile');
-goog.require('ol.source.ImageWMS');
-goog.require('ol.source.WMTS');
-
-
-/**
- * Provides help functions that helps you to create and manage layers.
- * @param {angular.$q} $q Angular promises/deferred service.
- * @param {angular.$http} $http Angular http service.
- * @constructor
- * @struct
- * @ngdoc service
- * @ngname ngeoLayerHelper
- * @ngInject
- */
-ngeo.LayerHelper = function($q, $http) {
-
-  /**
-   * @type {angular.$q}
-   * @private
-   */
-  this.$q_ = $q;
-
-  /**
-   * @type {angular.$http}
-   * @private
-   */
-  this.$http_ = $http;
-};
-
-
-/**
- * @const
- */
-ngeo.LayerHelper.GROUP_KEY = 'groupName';
-
-
-/**
- * @const
- */
-ngeo.LayerHelper.REFRESH_PARAM = 'random';
-
-
-/**
- * Create and return a basic WMS layer with only a source URL and a comma
- * separated layers names (see {@link ol.source.ImageWMS}).
- * @param {string} sourceURL The source URL.
- * @param {string} sourceLayersName A comma separated names string.
- * @param {string=} opt_serverType Type of the server ("mapserver",
- *     "geoserver", "qgisserver", …).
- * @param {string=} opt_time time parameter for layer queryable by time/periode
- * @param {Object.<string, string>=} opt_params WMS parameters.
- * @return {ol.layer.Image} WMS Layer.
- * @export
- */
-ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
-    sourceLayersName, opt_serverType, opt_time, opt_params) {
-
-  var params = {'LAYERS': sourceLayersName};
-  var olServerType;
-  if (opt_time) {
-    params['TIME'] = opt_time;
-  }
-  if (opt_serverType) {
-    params['SERVERTYPE'] = opt_serverType;
-    // OpenLayers expects 'qgis' insteads of 'qgisserver'
-    olServerType = opt_serverType.replace('qgisserver', 'qgis');
-  }
-  var source = new ol.source.ImageWMS({
-    url: sourceURL,
-    params: params,
-    serverType: olServerType
-  });
-  if (opt_params) {
-    source.updateParams(opt_params);
-  }
-
-  return new ol.layer.Image({source: source});
-};
-
-
-/**
- * Create and return a promise that provides a WMTS layer with source on
- * success, no layer else.
- * The WMTS layer source will be configured by the capabilities that are
- * loaded from the given capabilitiesUrl.
- * The style object described in the capabilities for this layer will be added
- * as key 'capabilitiesStyles' as param of the new layer.
- * @param {string} capabilitiesURL The getCapabilities url.
- * @param {string} layerName The name of the layer.
- * @param {Object.<string, string>=} opt_dimensions WMTS dimensions.
- * @return {angular.$q.Promise.<ol.layer.Tile>} A Promise with a layer (with source) on success,
- *     no layer else.
- * @export
- */
-ngeo.LayerHelper.prototype.createWMTSLayerFromCapabilitites = function(capabilitiesURL, layerName, opt_dimensions) {
-  var parser = new ol.format.WMTSCapabilities();
-  var layer = new ol.layer.Tile({
-    preload: Infinity
-  });
-  var $q = this.$q_;
-
-  return this.$http_.get(capabilitiesURL).then(function(response) {
-    var result;
-    if (response.data) {
-      result = parser.read(response.data);
-    }
-    if (result) {
-      var options = ol.source.WMTS.optionsFromCapabilities(result, {
-        layer: layerName
-      });
-      var source = new ol.source.WMTS(options);
-      if (opt_dimensions) {
-        source.updateDimensions(opt_dimensions);
-      }
-      layer.setSource(source);
-
-      // Add styles from capabilities as param of the layer
-      var layers = result['Contents']['Layer'];
-      var l = ol.array.find(layers, function(elt, index, array) {
-        return elt['Identifier'] == layerName;
-      });
-      layer.set('capabilitiesStyles', l['Style']);
-
-      return $q.resolve(layer);
-    }
-    return $q.reject('Failed to get WMTS capabilities from ' +
-        capabilitiesURL);
-  });
-};
-
-
-/**
- * Create and return an ol.layer.Group. You can pass a collection of layers to
- * directly add them in the returned group.
- * @param {ol.Collection.<ol.layer.Base>=} opt_layers The layer to add to the
- * returned Group.
- * @return {ol.layer.Group} Layer group.
- * @export
- */
-ngeo.LayerHelper.prototype.createBasicGroup = function(opt_layers) {
-  var group = new ol.layer.Group();
-  if (goog.isDefAndNotNull(opt_layers)) {
-    group.setLayers(opt_layers);
-  }
-  return group;
-};
-
-
-/**
- * Retrieve (or create if it doesn't exist) and return a group of layer from
- * the base array of layers of a map. The given name is used as unique
- * identifier. If the group is created, it will be automatically added to
- * the map.
- * @param {ol.Map} map A map.
- * @param {string} groupName The name of the group.
- * @return {ol.layer.Group} The group corresponding to the given name.
- * @export
- */
-ngeo.LayerHelper.prototype.getGroupFromMap = function(map, groupName) {
-  var groups = map.getLayerGroup().getLayers();
-  var group;
-  groups.getArray().some(function(existingGroup) {
-    if (existingGroup.get(ngeo.LayerHelper.GROUP_KEY) === groupName) {
-      group = /** @type {ol.layer.Group} */ (existingGroup);
-      return true;
-    } else {
-      return false;
-    }
-  });
-  if (!group) {
-    group = this.createBasicGroup();
-    group.set(ngeo.LayerHelper.GROUP_KEY, groupName);
-    map.addLayer(group);
-  }
-  return group;
-};
-
-
-/**
- * Get an array of all layers in a group. The group can contain multiple levels
- * of others groups.
- * @param {ol.layer.Base} layer The base layer, mostly a group of layers.
- * @return {Array.<ol.layer.Layer>} Layers.
- * @export
- */
-ngeo.LayerHelper.prototype.getFlatLayers = function(layer) {
-  return this.getFlatLayers_(layer, []);
-};
-
-
-/**
- * Get an array of all layers in a group. The group can contain multiple levels
- * of others groups.
- * @param {ol.layer.Base} layer The base layer, mostly a group of layers.
- * @param {Array.<ol.layer.Base>} array An array to add layers.
- * @return {Array.<ol.layer.Layer>} Layers.
- * @private
- */
-ngeo.LayerHelper.prototype.getFlatLayers_ = function(layer, array) {
-  if (layer instanceof ol.layer.Group) {
-    var sublayers = layer.getLayers();
-    sublayers.forEach(function(l) {
-      this.getFlatLayers_(l, array);
-    }, this);
-  } else {
-    if (array.indexOf(layer) < 0) {
-      array.push(layer);
-    }
-  }
-  return array;
-};
-
-
-/**
- * Get a layer that has a `layerName` property equal to a given layer name from
- * an array of layers. If one of the layers in the array is a group, then the
- * layers contained in that group are searched as well.
- * @param {string} layerName The name of the layer we're looking for.
- * @param {Array.<ol.layer.Base>} layers Layers.
- * @return {?ol.layer.Base} Layer.
- * @export
- */
-ngeo.LayerHelper.prototype.getLayerByName = function(layerName, layers) {
-  var found = null;
-  layers.some(function(layer) {
-    if (layer instanceof ol.layer.Group) {
-      var sublayers = layer.getLayers().getArray();
-      found = this.getLayerByName(layerName, sublayers);
-    } else if (layer.get('layerNodeName') === layerName) {
-      found = layer;
-    }
-    return !!found;
-  }, this);
-
-  return found;
-};
-
-
-/**
- * Get the WMTS legend URL for the given layer.
- * @param {ol.layer.Tile} layer Tile layer as returned by the
- * ngeo layerHelper service.
- * @return {string|undefined} The legend URL or undefined.
- * @export
- */
-ngeo.LayerHelper.prototype.getWMTSLegendURL = function(layer) {
-  // FIXME case of multiple styles ?  case of multiple legendUrl ?
-  var url;
-  var styles = layer.get('capabilitiesStyles');
-  if (styles !== undefined) {
-    var legendURL = styles[0]['legendURL'];
-    if (legendURL !== undefined) {
-      url = legendURL[0]['href'];
-    }
-  }
-  return url;
-};
-
-
-/**
- * Get the WMS legend URL for the given node.
- * @param {string} url The base url of the wms service.
- * @param {string} layerName The name of a wms layer.
- * @param {number=} opt_scale A scale.
- * @param {string=} opt_legendRule rule parameters to add to the returned URL.
- * @return {string|undefined} The legend URL or undefined.
- * @export
- */
-ngeo.LayerHelper.prototype.getWMSLegendURL = function(url,
-    layerName, opt_scale, opt_legendRule) {
-  if (!url) {
-    return undefined;
-  }
-  url = goog.uri.utils.setParam(url, 'FORMAT', 'image/png');
-  url = goog.uri.utils.setParam(url, 'TRANSPARENT', true);
-  url = goog.uri.utils.setParam(url, 'SERVICE', 'WMS');
-  url = goog.uri.utils.setParam(url, 'VERSION', '1.1.1');
-  url = goog.uri.utils.setParam(url, 'REQUEST', 'GetLegendGraphic');
-  url = goog.uri.utils.setParam(url, 'LAYER', layerName);
-  if (opt_scale !== undefined) {
-    url = goog.uri.utils.setParam(url, 'SCALE', opt_scale);
-  }
-  if (opt_legendRule !== undefined) {
-    url = goog.uri.utils.setParam(url, 'RULE', opt_legendRule);
-  }
-  return url;
-};
-
-
-/**
- * Returns if this layer is visible at the current resolution.
- * @param {ol.layer.Base} layer Layer.
- * @param {ol.Map} map Map.
- * @return {boolean} Is the layer currently visible?
- */
-ngeo.LayerHelper.prototype.isLayerVisible = function(layer, map) {
-  if (!layer.getVisible()) {
-    return false;
-  }
-
-  var currentResolution = map.getView().getResolution();
-  return currentResolution > layer.getMinResolution() &&
-      currentResolution < layer.getMaxResolution();
-};
-
-
-/**
- * Force a WMS layer to refresh using a random value.
- * @param {ol.layer.Image|ol.layer.Tile} layer Layer to refresh.
- */
-ngeo.LayerHelper.prototype.refreshWMSLayer = function(layer) {
-  var source = layer.getSource();
-  goog.asserts.assert(
-    source instanceof ol.source.ImageWMS ||
-    source instanceof ol.source.TileWMS
-  );
-  var params = source.getParams();
-  params[ngeo.LayerHelper.REFRESH_PARAM] = Math.random();
-  source.updateParams(params);
-};
-
-
-/**
- * Update the LAYERS parameter of the source of the given WMS layer.
- * @param {ol.layer.Image} layer The WMS layer.
- * @param {string} names The names that will be used to set
- * the LAYERS parameter.
- * @param {string=} opt_time The start
- * and optionally the end datetime (for time range selection) selected by user
- * in a ISO-8601 string datetime or time interval format
- * @export
- */
-ngeo.LayerHelper.prototype.updateWMSLayerState = function(layer,
-    names, opt_time) {
-  // Don't send layer without parameters, hide layer instead;
-  if (names.length <= 0) {
-    layer.setVisible(false);
-  } else {
-    layer.setVisible(true);
-    var source = /** @type {ol.source.ImageWMS} */ (layer.getSource());
-    if (opt_time) {
-      source.updateParams({'LAYERS': names, 'TIME': opt_time});
-    } else {
-      source.updateParams({'LAYERS': names});
-    }
-  }
-};
-
-
-ngeo.module.service('ngeoLayerHelper', ngeo.LayerHelper);
 
 // Copyright 2009 The Closure Library Authors. All Rights Reserved.
 //
@@ -78899,7 +78549,7 @@ goog.asserts.getType_ = function(value) {
   }
 };
 
-// Copyright 2008 The Closure Library Authors. All Rights Reserved.
+// Copyright 2010 The Closure Library Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -78914,2627 +78564,150 @@ goog.asserts.getType_ = function(value) {
 // limitations under the License.
 
 /**
- * @fileoverview Simple utilities for dealing with URI strings.
+ * @fileoverview A global registry for entry points into a program,
+ * so that they can be instrumented. Each module should register their
+ * entry points with this registry. Designed to be compiled out
+ * if no instrumentation is requested.
  *
- * This is intended to be a lightweight alternative to constructing goog.Uri
- * objects.  Whereas goog.Uri adds several kilobytes to the binary regardless
- * of how much of its functionality you use, this is designed to be a set of
- * mostly-independent utilities so that the compiler includes only what is
- * necessary for the task.  Estimated savings of porting is 5k pre-gzip and
- * 1.5k post-gzip.  To ensure the savings remain, future developers should
- * avoid adding new functionality to existing functions, but instead create
- * new ones and factor out shared code.
+ * Entry points may be registered before or after a call to
+ * goog.debug.entryPointRegistry.monitorAll. If an entry point is registered
+ * later, the existing monitor will instrument the new entry point.
  *
- * Many of these utilities have limited functionality, tailored to common
- * cases.  The query parameter utilities assume that the parameter keys are
- * already encoded, since most keys are compile-time alphanumeric strings.  The
- * query parameter mutation utilities also do not tolerate fragment identifiers.
- *
- * By design, these functions can be slower than goog.Uri equivalents.
- * Repeated calls to some of functions may be quadratic in behavior for IE,
- * although the effect is somewhat limited given the 2kb limit.
- *
- * One advantage of the limited functionality here is that this approach is
- * less sensitive to differences in URI encodings than goog.Uri, since these
- * functions operate on strings directly, rather than decoding them and
- * then re-encoding.
- *
- * Uses features of RFC 3986 for parsing/formatting URIs:
- *   http://www.ietf.org/rfc/rfc3986.txt
- *
- * @author gboyer@google.com (Garrett Boyer) - The "lightened" design.
+ * @author nicksantos@google.com (Nick Santos)
  */
 
-goog.provide('goog.uri.utils');
-goog.provide('goog.uri.utils.ComponentIndex');
-goog.provide('goog.uri.utils.QueryArray');
-goog.provide('goog.uri.utils.QueryValue');
-goog.provide('goog.uri.utils.StandardQueryParam');
+goog.provide('goog.debug.EntryPointMonitor');
+goog.provide('goog.debug.entryPointRegistry');
 
 goog.require('goog.asserts');
-goog.require('goog.string');
+
 
 
 /**
- * Character codes inlined to avoid object allocations due to charCode.
- * @enum {number}
+ * @interface
+ */
+goog.debug.EntryPointMonitor = function() {};
+
+
+/**
+ * Instruments a function.
+ *
+ * @param {!Function} fn A function to instrument.
+ * @return {!Function} The instrumented function.
+ */
+goog.debug.EntryPointMonitor.prototype.wrap;
+
+
+/**
+ * Try to remove an instrumentation wrapper created by this monitor.
+ * If the function passed to unwrap is not a wrapper created by this
+ * monitor, then we will do nothing.
+ *
+ * Notice that some wrappers may not be unwrappable. For example, if other
+ * monitors have applied their own wrappers, then it will be impossible to
+ * unwrap them because their wrappers will have captured our wrapper.
+ *
+ * So it is important that entry points are unwrapped in the reverse
+ * order that they were wrapped.
+ *
+ * @param {!Function} fn A function to unwrap.
+ * @return {!Function} The unwrapped function, or {@code fn} if it was not
+ *     a wrapped function created by this monitor.
+ */
+goog.debug.EntryPointMonitor.prototype.unwrap;
+
+
+/**
+ * An array of entry point callbacks.
+ * @type {!Array<function(!Function)>}
  * @private
  */
-goog.uri.utils.CharCode_ = {
-  AMPERSAND: 38,
-  EQUAL: 61,
-  HASH: 35,
-  QUESTION: 63
-};
+goog.debug.entryPointRegistry.refList_ = [];
 
 
 /**
- * Builds a URI string from already-encoded parts.
- *
- * No encoding is performed.  Any component may be omitted as either null or
- * undefined.
- *
- * @param {?string=} opt_scheme The scheme such as 'http'.
- * @param {?string=} opt_userInfo The user name before the '@'.
- * @param {?string=} opt_domain The domain such as 'www.google.com', already
- *     URI-encoded.
- * @param {(string|number|null)=} opt_port The port number.
- * @param {?string=} opt_path The path, already URI-encoded.  If it is not
- *     empty, it must begin with a slash.
- * @param {?string=} opt_queryData The URI-encoded query data.
- * @param {?string=} opt_fragment The URI-encoded fragment identifier.
- * @return {string} The fully combined URI.
- */
-goog.uri.utils.buildFromEncodedParts = function(
-    opt_scheme, opt_userInfo, opt_domain, opt_port, opt_path, opt_queryData,
-    opt_fragment) {
-  var out = '';
-
-  if (opt_scheme) {
-    out += opt_scheme + ':';
-  }
-
-  if (opt_domain) {
-    out += '//';
-
-    if (opt_userInfo) {
-      out += opt_userInfo + '@';
-    }
-
-    out += opt_domain;
-
-    if (opt_port) {
-      out += ':' + opt_port;
-    }
-  }
-
-  if (opt_path) {
-    out += opt_path;
-  }
-
-  if (opt_queryData) {
-    out += '?' + opt_queryData;
-  }
-
-  if (opt_fragment) {
-    out += '#' + opt_fragment;
-  }
-
-  return out;
-};
-
-
-/**
- * A regular expression for breaking a URI into its component parts.
- *
- * {@link http://www.ietf.org/rfc/rfc3986.txt} says in Appendix B
- * As the "first-match-wins" algorithm is identical to the "greedy"
- * disambiguation method used by POSIX regular expressions, it is natural and
- * commonplace to use a regular expression for parsing the potential five
- * components of a URI reference.
- *
- * The following line is the regular expression for breaking-down a
- * well-formed URI reference into its components.
- *
- * <pre>
- * ^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?
- *  12            3  4          5       6  7        8 9
- * </pre>
- *
- * The numbers in the second line above are only to assist readability; they
- * indicate the reference points for each subexpression (i.e., each paired
- * parenthesis). We refer to the value matched for subexpression <n> as $<n>.
- * For example, matching the above expression to
- * <pre>
- *     http://www.ics.uci.edu/pub/ietf/uri/#Related
- * </pre>
- * results in the following subexpression matches:
- * <pre>
- *    $1 = http:
- *    $2 = http
- *    $3 = //www.ics.uci.edu
- *    $4 = www.ics.uci.edu
- *    $5 = /pub/ietf/uri/
- *    $6 = <undefined>
- *    $7 = <undefined>
- *    $8 = #Related
- *    $9 = Related
- * </pre>
- * where <undefined> indicates that the component is not present, as is the
- * case for the query component in the above example. Therefore, we can
- * determine the value of the five components as
- * <pre>
- *    scheme    = $2
- *    authority = $4
- *    path      = $5
- *    query     = $7
- *    fragment  = $9
- * </pre>
- *
- * The regular expression has been modified slightly to expose the
- * userInfo, domain, and port separately from the authority.
- * The modified version yields
- * <pre>
- *    $1 = http              scheme
- *    $2 = <undefined>       userInfo -\
- *    $3 = www.ics.uci.edu   domain     | authority
- *    $4 = <undefined>       port     -/
- *    $5 = /pub/ietf/uri/    path
- *    $6 = <undefined>       query without ?
- *    $7 = Related           fragment without #
- * </pre>
- * @type {!RegExp}
+ * Monitors that should wrap all the entry points.
+ * @type {!Array<!goog.debug.EntryPointMonitor>}
  * @private
  */
-goog.uri.utils.splitRe_ = new RegExp(
-    '^' +
-    '(?:' +
-    '([^:/?#.]+)' +  // scheme - ignore special characters
-                     // used by other URL parts such as :,
-                     // ?, /, #, and .
-    ':)?' +
-    '(?://' +
-    '(?:([^/?#]*)@)?' +  // userInfo
-    '([^/#?]*?)' +       // domain
-    '(?::([0-9]+))?' +   // port
-    '(?=[/#?]|$)' +      // authority-terminating character
-    ')?' +
-    '([^?#]+)?' +        // path
-    '(?:\\?([^#]*))?' +  // query
-    '(?:#(.*))?' +       // fragment
-    '$');
+goog.debug.entryPointRegistry.monitors_ = [];
 
 
 /**
- * The index of each URI component in the return value of goog.uri.utils.split.
- * @enum {number}
- */
-goog.uri.utils.ComponentIndex = {
-  SCHEME: 1,
-  USER_INFO: 2,
-  DOMAIN: 3,
-  PORT: 4,
-  PATH: 5,
-  QUERY_DATA: 6,
-  FRAGMENT: 7
-};
-
-
-/**
- * Splits a URI into its component parts.
- *
- * Each component can be accessed via the component indices; for example:
- * <pre>
- * goog.uri.utils.split(someStr)[goog.uri.utils.CompontentIndex.QUERY_DATA];
- * </pre>
- *
- * @param {string} uri The URI string to examine.
- * @return {!Array<string|undefined>} Each component still URI-encoded.
- *     Each component that is present will contain the encoded value, whereas
- *     components that are not present will be undefined or empty, depending
- *     on the browser's regular expression implementation.  Never null, since
- *     arbitrary strings may still look like path names.
- */
-goog.uri.utils.split = function(uri) {
-  // See @return comment -- never null.
-  return /** @type {!Array<string|undefined>} */ (
-      uri.match(goog.uri.utils.splitRe_));
-};
-
-
-/**
- * @param {?string} uri A possibly null string.
- * @param {boolean=} opt_preserveReserved If true, percent-encoding of RFC-3986
- *     reserved characters will not be removed.
- * @return {?string} The string URI-decoded, or null if uri is null.
+ * Whether goog.debug.entryPointRegistry.monitorAll has ever been called.
+ * Checking this allows the compiler to optimize out the registrations.
+ * @type {boolean}
  * @private
  */
-goog.uri.utils.decodeIfPossible_ = function(uri, opt_preserveReserved) {
-  if (!uri) {
-    return uri;
-  }
-
-  return opt_preserveReserved ? decodeURI(uri) : decodeURIComponent(uri);
-};
+goog.debug.entryPointRegistry.monitorsMayExist_ = false;
 
 
 /**
- * Gets a URI component by index.
+ * Register an entry point with this module.
  *
- * It is preferred to use the getPathEncoded() variety of functions ahead,
- * since they are more readable.
+ * The entry point will be instrumented when a monitor is passed to
+ * goog.debug.entryPointRegistry.monitorAll. If this has already occurred, the
+ * entry point is instrumented immediately.
  *
- * @param {goog.uri.utils.ComponentIndex} componentIndex The component index.
- * @param {string} uri The URI to examine.
- * @return {?string} The still-encoded component, or null if the component
- *     is not present.
- * @private
+ * @param {function(!Function)} callback A callback function which is called
+ *     with a transforming function to instrument the entry point. The callback
+ *     is responsible for wrapping the relevant entry point with the
+ *     transforming function.
  */
-goog.uri.utils.getComponentByIndex_ = function(componentIndex, uri) {
-  // Convert undefined, null, and empty string into null.
-  return goog.uri.utils.split(uri)[componentIndex] || null;
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The protocol or scheme, or null if none.  Does not
- *     include trailing colons or slashes.
- */
-goog.uri.utils.getScheme = function(uri) {
-  return goog.uri.utils.getComponentByIndex_(
-      goog.uri.utils.ComponentIndex.SCHEME, uri);
-};
-
-
-/**
- * Gets the effective scheme for the URL.  If the URL is relative then the
- * scheme is derived from the page's location.
- * @param {string} uri The URI to examine.
- * @return {string} The protocol or scheme, always lower case.
- */
-goog.uri.utils.getEffectiveScheme = function(uri) {
-  var scheme = goog.uri.utils.getScheme(uri);
-  if (!scheme && goog.global.self && goog.global.self.location) {
-    var protocol = goog.global.self.location.protocol;
-    scheme = protocol.substr(0, protocol.length - 1);
-  }
-  // NOTE: When called from a web worker in Firefox 3.5, location maybe null.
-  // All other browsers with web workers support self.location from the worker.
-  return scheme ? scheme.toLowerCase() : '';
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The user name still encoded, or null if none.
- */
-goog.uri.utils.getUserInfoEncoded = function(uri) {
-  return goog.uri.utils.getComponentByIndex_(
-      goog.uri.utils.ComponentIndex.USER_INFO, uri);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The decoded user info, or null if none.
- */
-goog.uri.utils.getUserInfo = function(uri) {
-  return goog.uri.utils.decodeIfPossible_(
-      goog.uri.utils.getUserInfoEncoded(uri));
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The domain name still encoded, or null if none.
- */
-goog.uri.utils.getDomainEncoded = function(uri) {
-  return goog.uri.utils.getComponentByIndex_(
-      goog.uri.utils.ComponentIndex.DOMAIN, uri);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The decoded domain, or null if none.
- */
-goog.uri.utils.getDomain = function(uri) {
-  return goog.uri.utils.decodeIfPossible_(
-      goog.uri.utils.getDomainEncoded(uri), true /* opt_preserveReserved */);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?number} The port number, or null if none.
- */
-goog.uri.utils.getPort = function(uri) {
-  // Coerce to a number.  If the result of getComponentByIndex_ is null or
-  // non-numeric, the number coersion yields NaN.  This will then return
-  // null for all non-numeric cases (though also zero, which isn't a relevant
-  // port number).
-  return Number(
-             goog.uri.utils.getComponentByIndex_(
-                 goog.uri.utils.ComponentIndex.PORT, uri)) ||
-      null;
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The path still encoded, or null if none. Includes the
- *     leading slash, if any.
- */
-goog.uri.utils.getPathEncoded = function(uri) {
-  return goog.uri.utils.getComponentByIndex_(
-      goog.uri.utils.ComponentIndex.PATH, uri);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The decoded path, or null if none.  Includes the leading
- *     slash, if any.
- */
-goog.uri.utils.getPath = function(uri) {
-  return goog.uri.utils.decodeIfPossible_(
-      goog.uri.utils.getPathEncoded(uri), true /* opt_preserveReserved */);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The query data still encoded, or null if none.  Does not
- *     include the question mark itself.
- */
-goog.uri.utils.getQueryData = function(uri) {
-  return goog.uri.utils.getComponentByIndex_(
-      goog.uri.utils.ComponentIndex.QUERY_DATA, uri);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The fragment identifier, or null if none.  Does not
- *     include the hash mark itself.
- */
-goog.uri.utils.getFragmentEncoded = function(uri) {
-  // The hash mark may not appear in any other part of the URL.
-  var hashIndex = uri.indexOf('#');
-  return hashIndex < 0 ? null : uri.substr(hashIndex + 1);
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @param {?string} fragment The encoded fragment identifier, or null if none.
- *     Does not include the hash mark itself.
- * @return {string} The URI with the fragment set.
- */
-goog.uri.utils.setFragmentEncoded = function(uri, fragment) {
-  return goog.uri.utils.removeFragment(uri) + (fragment ? '#' + fragment : '');
-};
-
-
-/**
- * @param {string} uri The URI to examine.
- * @return {?string} The decoded fragment identifier, or null if none.  Does
- *     not include the hash mark.
- */
-goog.uri.utils.getFragment = function(uri) {
-  return goog.uri.utils.decodeIfPossible_(
-      goog.uri.utils.getFragmentEncoded(uri));
-};
-
-
-/**
- * Extracts everything up to the port of the URI.
- * @param {string} uri The URI string.
- * @return {string} Everything up to and including the port.
- */
-goog.uri.utils.getHost = function(uri) {
-  var pieces = goog.uri.utils.split(uri);
-  return goog.uri.utils.buildFromEncodedParts(
-      pieces[goog.uri.utils.ComponentIndex.SCHEME],
-      pieces[goog.uri.utils.ComponentIndex.USER_INFO],
-      pieces[goog.uri.utils.ComponentIndex.DOMAIN],
-      pieces[goog.uri.utils.ComponentIndex.PORT]);
-};
-
-
-/**
- * Extracts the path of the URL and everything after.
- * @param {string} uri The URI string.
- * @return {string} The URI, starting at the path and including the query
- *     parameters and fragment identifier.
- */
-goog.uri.utils.getPathAndAfter = function(uri) {
-  var pieces = goog.uri.utils.split(uri);
-  return goog.uri.utils.buildFromEncodedParts(
-      null, null, null, null, pieces[goog.uri.utils.ComponentIndex.PATH],
-      pieces[goog.uri.utils.ComponentIndex.QUERY_DATA],
-      pieces[goog.uri.utils.ComponentIndex.FRAGMENT]);
-};
-
-
-/**
- * Gets the URI with the fragment identifier removed.
- * @param {string} uri The URI to examine.
- * @return {string} Everything preceding the hash mark.
- */
-goog.uri.utils.removeFragment = function(uri) {
-  // The hash mark may not appear in any other part of the URL.
-  var hashIndex = uri.indexOf('#');
-  return hashIndex < 0 ? uri : uri.substr(0, hashIndex);
-};
-
-
-/**
- * Ensures that two URI's have the exact same domain, scheme, and port.
- *
- * Unlike the version in goog.Uri, this checks protocol, and therefore is
- * suitable for checking against the browser's same-origin policy.
- *
- * @param {string} uri1 The first URI.
- * @param {string} uri2 The second URI.
- * @return {boolean} Whether they have the same scheme, domain and port.
- */
-goog.uri.utils.haveSameDomain = function(uri1, uri2) {
-  var pieces1 = goog.uri.utils.split(uri1);
-  var pieces2 = goog.uri.utils.split(uri2);
-  return pieces1[goog.uri.utils.ComponentIndex.DOMAIN] ==
-      pieces2[goog.uri.utils.ComponentIndex.DOMAIN] &&
-      pieces1[goog.uri.utils.ComponentIndex.SCHEME] ==
-      pieces2[goog.uri.utils.ComponentIndex.SCHEME] &&
-      pieces1[goog.uri.utils.ComponentIndex.PORT] ==
-      pieces2[goog.uri.utils.ComponentIndex.PORT];
-};
-
-
-/**
- * Asserts that there are no fragment or query identifiers, only in uncompiled
- * mode.
- * @param {string} uri The URI to examine.
- * @private
- */
-goog.uri.utils.assertNoFragmentsOrQueries_ = function(uri) {
-  // NOTE: would use goog.asserts here, but jscompiler doesn't know that
-  // indexOf has no side effects.
-  if (goog.DEBUG && (uri.indexOf('#') >= 0 || uri.indexOf('?') >= 0)) {
-    throw Error(
-        'goog.uri.utils: Fragment or query identifiers are not ' +
-        'supported: [' + uri + ']');
-  }
-};
-
-
-/**
- * Supported query parameter values by the parameter serializing utilities.
- *
- * If a value is null or undefined, the key-value pair is skipped, as an easy
- * way to omit parameters conditionally.  Non-array parameters are converted
- * to a string and URI encoded.  Array values are expanded into multiple
- * &key=value pairs, with each element stringized and URI-encoded.
- *
- * @typedef {*}
- */
-goog.uri.utils.QueryValue;
-
-
-/**
- * An array representing a set of query parameters with alternating keys
- * and values.
- *
- * Keys are assumed to be URI encoded already and live at even indices.  See
- * goog.uri.utils.QueryValue for details on how parameter values are encoded.
- *
- * Example:
- * <pre>
- * var data = [
- *   // Simple param: ?name=BobBarker
- *   'name', 'BobBarker',
- *   // Conditional param -- may be omitted entirely.
- *   'specialDietaryNeeds', hasDietaryNeeds() ? getDietaryNeeds() : null,
- *   // Multi-valued param: &house=LosAngeles&house=NewYork&house=null
- *   'house', ['LosAngeles', 'NewYork', null]
- * ];
- * </pre>
- *
- * @typedef {!Array<string|goog.uri.utils.QueryValue>}
- */
-goog.uri.utils.QueryArray;
-
-
-/**
- * Parses encoded query parameters and calls callback function for every
- * parameter found in the string.
- *
- * Missing value of parameter (e.g. “…&key&…”) is treated as if the value was an
- * empty string.  Keys may be empty strings (e.g. “…&=value&…”) which also means
- * that “…&=&…” and “…&&…” will result in an empty key and value.
- *
- * @param {string} encodedQuery Encoded query string excluding question mark at
- *     the beginning.
- * @param {function(string, string)} callback Function called for every
- *     parameter found in query string.  The first argument (name) will not be
- *     urldecoded (so the function is consistent with buildQueryData), but the
- *     second will.  If the parameter has no value (i.e. “=” was not present)
- *     the second argument (value) will be an empty string.
- */
-goog.uri.utils.parseQueryData = function(encodedQuery, callback) {
-  if (!encodedQuery) {
-    return;
-  }
-  var pairs = encodedQuery.split('&');
-  for (var i = 0; i < pairs.length; i++) {
-    var indexOfEquals = pairs[i].indexOf('=');
-    var name = null;
-    var value = null;
-    if (indexOfEquals >= 0) {
-      name = pairs[i].substring(0, indexOfEquals);
-      value = pairs[i].substring(indexOfEquals + 1);
-    } else {
-      name = pairs[i];
-    }
-    callback(name, value ? goog.string.urlDecode(value) : '');
-  }
-};
-
-
-/**
- * Appends a URI and query data in a string buffer with special preconditions.
- *
- * Internal implementation utility, performing very few object allocations.
- *
- * @param {!Array<string|undefined>} buffer A string buffer.  The first element
- *     must be the base URI, and may have a fragment identifier.  If the array
- *     contains more than one element, the second element must be an ampersand,
- *     and may be overwritten, depending on the base URI.  Undefined elements
- *     are treated as empty-string.
- * @return {string} The concatenated URI and query data.
- * @private
- */
-goog.uri.utils.appendQueryData_ = function(buffer) {
-  if (buffer[1]) {
-    // At least one query parameter was added.  We need to check the
-    // punctuation mark, which is currently an ampersand, and also make sure
-    // there aren't any interfering fragment identifiers.
-    var baseUri = /** @type {string} */ (buffer[0]);
-    var hashIndex = baseUri.indexOf('#');
-    if (hashIndex >= 0) {
-      // Move the fragment off the base part of the URI into the end.
-      buffer.push(baseUri.substr(hashIndex));
-      buffer[0] = baseUri = baseUri.substr(0, hashIndex);
-    }
-    var questionIndex = baseUri.indexOf('?');
-    if (questionIndex < 0) {
-      // No question mark, so we need a question mark instead of an ampersand.
-      buffer[1] = '?';
-    } else if (questionIndex == baseUri.length - 1) {
-      // Question mark is the very last character of the existing URI, so don't
-      // append an additional delimiter.
-      buffer[1] = undefined;
+goog.debug.entryPointRegistry.register = function(callback) {
+  // Don't use push(), so that this can be compiled out.
+  goog.debug.entryPointRegistry
+      .refList_[goog.debug.entryPointRegistry.refList_.length] = callback;
+  // If no one calls monitorAll, this can be compiled out.
+  if (goog.debug.entryPointRegistry.monitorsMayExist_) {
+    var monitors = goog.debug.entryPointRegistry.monitors_;
+    for (var i = 0; i < monitors.length; i++) {
+      callback(goog.bind(monitors[i].wrap, monitors[i]));
     }
   }
-
-  return buffer.join('');
 };
 
 
 /**
- * Appends key=value pairs to an array, supporting multi-valued objects.
- * @param {string} key The key prefix.
- * @param {goog.uri.utils.QueryValue} value The value to serialize.
- * @param {!Array<string>} pairs The array to which the 'key=value' strings
- *     should be appended.
- * @private
- */
-goog.uri.utils.appendKeyValuePairs_ = function(key, value, pairs) {
-  if (goog.isArray(value)) {
-    // Convince the compiler it's an array.
-    goog.asserts.assertArray(value);
-    for (var j = 0; j < value.length; j++) {
-      // Convert to string explicitly, to short circuit the null and array
-      // logic in this function -- this ensures that null and undefined get
-      // written as literal 'null' and 'undefined', and arrays don't get
-      // expanded out but instead encoded in the default way.
-      goog.uri.utils.appendKeyValuePairs_(key, String(value[j]), pairs);
-    }
-  } else if (value != null) {
-    // Skip a top-level null or undefined entirely.
-    pairs.push(
-        '&', key,
-        // Check for empty string. Zero gets encoded into the url as literal
-        // strings.  For empty string, skip the equal sign, to be consistent
-        // with UriBuilder.java.
-        value === '' ? '' : '=', goog.string.urlEncode(value));
-  }
-};
-
-
-/**
- * Builds a buffer of query data from a sequence of alternating keys and values.
+ * Configures a monitor to wrap all entry points.
  *
- * @param {!Array<string|undefined>} buffer A string buffer to append to.  The
- *     first element appended will be an '&', and may be replaced by the caller.
- * @param {!goog.uri.utils.QueryArray|!Arguments} keysAndValues An array with
- *     alternating keys and values -- see the typedef.
- * @param {number=} opt_startIndex A start offset into the arary, defaults to 0.
- * @return {!Array<string|undefined>} The buffer argument.
- * @private
+ * Entry points that have already been registered are immediately wrapped by
+ * the monitor. When an entry point is registered in the future, it will also
+ * be wrapped by the monitor when it is registered.
+ *
+ * @param {!goog.debug.EntryPointMonitor} monitor An entry point monitor.
  */
-goog.uri.utils.buildQueryDataBuffer_ = function(
-    buffer, keysAndValues, opt_startIndex) {
+goog.debug.entryPointRegistry.monitorAll = function(monitor) {
+  goog.debug.entryPointRegistry.monitorsMayExist_ = true;
+  var transformer = goog.bind(monitor.wrap, monitor);
+  for (var i = 0; i < goog.debug.entryPointRegistry.refList_.length; i++) {
+    goog.debug.entryPointRegistry.refList_[i](transformer);
+  }
+  goog.debug.entryPointRegistry.monitors_.push(monitor);
+};
+
+
+/**
+ * Try to unmonitor all the entry points that have already been registered. If
+ * an entry point is registered in the future, it will not be wrapped by the
+ * monitor when it is registered. Note that this may fail if the entry points
+ * have additional wrapping.
+ *
+ * @param {!goog.debug.EntryPointMonitor} monitor The last monitor to wrap
+ *     the entry points.
+ * @throws {Error} If the monitor is not the most recently configured monitor.
+ */
+goog.debug.entryPointRegistry.unmonitorAllIfPossible = function(monitor) {
+  var monitors = goog.debug.entryPointRegistry.monitors_;
   goog.asserts.assert(
-      Math.max(keysAndValues.length - (opt_startIndex || 0), 0) % 2 == 0,
-      'goog.uri.utils: Key/value lists must be even in length.');
-
-  for (var i = opt_startIndex || 0; i < keysAndValues.length; i += 2) {
-    goog.uri.utils.appendKeyValuePairs_(
-        keysAndValues[i], keysAndValues[i + 1], buffer);
+      monitor == monitors[monitors.length - 1],
+      'Only the most recent monitor can be unwrapped.');
+  var transformer = goog.bind(monitor.unwrap, monitor);
+  for (var i = 0; i < goog.debug.entryPointRegistry.refList_.length; i++) {
+    goog.debug.entryPointRegistry.refList_[i](transformer);
   }
-
-  return buffer;
+  monitors.length--;
 };
-
-
-/**
- * Builds a query data string from a sequence of alternating keys and values.
- * Currently generates "&key&" for empty args.
- *
- * @param {goog.uri.utils.QueryArray} keysAndValues Alternating keys and
- *     values.  See the typedef.
- * @param {number=} opt_startIndex A start offset into the arary, defaults to 0.
- * @return {string} The encoded query string, in the form 'a=1&b=2'.
- */
-goog.uri.utils.buildQueryData = function(keysAndValues, opt_startIndex) {
-  var buffer =
-      goog.uri.utils.buildQueryDataBuffer_([], keysAndValues, opt_startIndex);
-  buffer[0] = '';  // Remove the leading ampersand.
-  return buffer.join('');
-};
-
-
-/**
- * Builds a buffer of query data from a map.
- *
- * @param {!Array<string|undefined>} buffer A string buffer to append to.  The
- *     first element appended will be an '&', and may be replaced by the caller.
- * @param {!Object<string, goog.uri.utils.QueryValue>} map An object where keys
- *     are URI-encoded parameter keys, and the values conform to the contract
- *     specified in the goog.uri.utils.QueryValue typedef.
- * @return {!Array<string|undefined>} The buffer argument.
- * @private
- */
-goog.uri.utils.buildQueryDataBufferFromMap_ = function(buffer, map) {
-  for (var key in map) {
-    goog.uri.utils.appendKeyValuePairs_(key, map[key], buffer);
-  }
-
-  return buffer;
-};
-
-
-/**
- * Builds a query data string from a map.
- * Currently generates "&key&" for empty args.
- *
- * @param {!Object<string, goog.uri.utils.QueryValue>} map An object where keys
- *     are URI-encoded parameter keys, and the values are arbitrary types
- *     or arrays. Keys with a null value are dropped.
- * @return {string} The encoded query string, in the form 'a=1&b=2'.
- */
-goog.uri.utils.buildQueryDataFromMap = function(map) {
-  var buffer = goog.uri.utils.buildQueryDataBufferFromMap_([], map);
-  buffer[0] = '';
-  return buffer.join('');
-};
-
-
-/**
- * Appends URI parameters to an existing URI.
- *
- * The variable arguments may contain alternating keys and values.  Keys are
- * assumed to be already URI encoded.  The values should not be URI-encoded,
- * and will instead be encoded by this function.
- * <pre>
- * appendParams('http://www.foo.com?existing=true',
- *     'key1', 'value1',
- *     'key2', 'value?willBeEncoded',
- *     'key3', ['valueA', 'valueB', 'valueC'],
- *     'key4', null);
- * result: 'http://www.foo.com?existing=true&' +
- *     'key1=value1&' +
- *     'key2=value%3FwillBeEncoded&' +
- *     'key3=valueA&key3=valueB&key3=valueC'
- * </pre>
- *
- * A single call to this function will not exhibit quadratic behavior in IE,
- * whereas multiple repeated calls may, although the effect is limited by
- * fact that URL's generally can't exceed 2kb.
- *
- * @param {string} uri The original URI, which may already have query data.
- * @param {...(goog.uri.utils.QueryArray|string|goog.uri.utils.QueryValue)}
- * var_args
- *     An array or argument list conforming to goog.uri.utils.QueryArray.
- * @return {string} The URI with all query parameters added.
- */
-goog.uri.utils.appendParams = function(uri, var_args) {
-  return goog.uri.utils.appendQueryData_(
-      arguments.length == 2 ?
-          goog.uri.utils.buildQueryDataBuffer_([uri], arguments[1], 0) :
-          goog.uri.utils.buildQueryDataBuffer_([uri], arguments, 1));
-};
-
-
-/**
- * Appends query parameters from a map.
- *
- * @param {string} uri The original URI, which may already have query data.
- * @param {!Object<goog.uri.utils.QueryValue>} map An object where keys are
- *     URI-encoded parameter keys, and the values are arbitrary types or arrays.
- *     Keys with a null value are dropped.
- * @return {string} The new parameters.
- */
-goog.uri.utils.appendParamsFromMap = function(uri, map) {
-  return goog.uri.utils.appendQueryData_(
-      goog.uri.utils.buildQueryDataBufferFromMap_([uri], map));
-};
-
-
-/**
- * Appends a single URI parameter.
- *
- * Repeated calls to this can exhibit quadratic behavior in IE6 due to the
- * way string append works, though it should be limited given the 2kb limit.
- *
- * @param {string} uri The original URI, which may already have query data.
- * @param {string} key The key, which must already be URI encoded.
- * @param {*=} opt_value The value, which will be stringized and encoded
- *     (assumed not already to be encoded).  If omitted, undefined, or null, the
- *     key will be added as a valueless parameter.
- * @return {string} The URI with the query parameter added.
- */
-goog.uri.utils.appendParam = function(uri, key, opt_value) {
-  var paramArr = [uri, '&', key];
-  if (goog.isDefAndNotNull(opt_value)) {
-    paramArr.push('=', goog.string.urlEncode(opt_value));
-  }
-  return goog.uri.utils.appendQueryData_(paramArr);
-};
-
-
-/**
- * Finds the next instance of a query parameter with the specified name.
- *
- * Does not instantiate any objects.
- *
- * @param {string} uri The URI to search.  May contain a fragment identifier
- *     if opt_hashIndex is specified.
- * @param {number} startIndex The index to begin searching for the key at.  A
- *     match may be found even if this is one character after the ampersand.
- * @param {string} keyEncoded The URI-encoded key.
- * @param {number} hashOrEndIndex Index to stop looking at.  If a hash
- *     mark is present, it should be its index, otherwise it should be the
- *     length of the string.
- * @return {number} The position of the first character in the key's name,
- *     immediately after either a question mark or a dot.
- * @private
- */
-goog.uri.utils.findParam_ = function(
-    uri, startIndex, keyEncoded, hashOrEndIndex) {
-  var index = startIndex;
-  var keyLength = keyEncoded.length;
-
-  // Search for the key itself and post-filter for surronuding punctuation,
-  // rather than expensively building a regexp.
-  while ((index = uri.indexOf(keyEncoded, index)) >= 0 &&
-         index < hashOrEndIndex) {
-    var precedingChar = uri.charCodeAt(index - 1);
-    // Ensure that the preceding character is '&' or '?'.
-    if (precedingChar == goog.uri.utils.CharCode_.AMPERSAND ||
-        precedingChar == goog.uri.utils.CharCode_.QUESTION) {
-      // Ensure the following character is '&', '=', '#', or NaN
-      // (end of string).
-      var followingChar = uri.charCodeAt(index + keyLength);
-      if (!followingChar || followingChar == goog.uri.utils.CharCode_.EQUAL ||
-          followingChar == goog.uri.utils.CharCode_.AMPERSAND ||
-          followingChar == goog.uri.utils.CharCode_.HASH) {
-        return index;
-      }
-    }
-    index += keyLength + 1;
-  }
-
-  return -1;
-};
-
-
-/**
- * Regular expression for finding a hash mark or end of string.
- * @type {RegExp}
- * @private
- */
-goog.uri.utils.hashOrEndRe_ = /#|$/;
-
-
-/**
- * Determines if the URI contains a specific key.
- *
- * Performs no object instantiations.
- *
- * @param {string} uri The URI to process.  May contain a fragment
- *     identifier.
- * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
- * @return {boolean} Whether the key is present.
- */
-goog.uri.utils.hasParam = function(uri, keyEncoded) {
-  return goog.uri.utils.findParam_(
-             uri, 0, keyEncoded, uri.search(goog.uri.utils.hashOrEndRe_)) >= 0;
-};
-
-
-/**
- * Gets the first value of a query parameter.
- * @param {string} uri The URI to process.  May contain a fragment.
- * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
- * @return {?string} The first value of the parameter (URI-decoded), or null
- *     if the parameter is not found.
- */
-goog.uri.utils.getParamValue = function(uri, keyEncoded) {
-  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
-  var foundIndex =
-      goog.uri.utils.findParam_(uri, 0, keyEncoded, hashOrEndIndex);
-
-  if (foundIndex < 0) {
-    return null;
-  } else {
-    var endPosition = uri.indexOf('&', foundIndex);
-    if (endPosition < 0 || endPosition > hashOrEndIndex) {
-      endPosition = hashOrEndIndex;
-    }
-    // Progress forth to the end of the "key=" or "key&" substring.
-    foundIndex += keyEncoded.length + 1;
-    // Use substr, because it (unlike substring) will return empty string
-    // if foundIndex > endPosition.
-    return goog.string.urlDecode(
-        uri.substr(foundIndex, endPosition - foundIndex));
-  }
-};
-
-
-/**
- * Gets all values of a query parameter.
- * @param {string} uri The URI to process.  May contain a fragment.
- * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
- * @return {!Array<string>} All URI-decoded values with the given key.
- *     If the key is not found, this will have length 0, but never be null.
- */
-goog.uri.utils.getParamValues = function(uri, keyEncoded) {
-  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
-  var position = 0;
-  var foundIndex;
-  var result = [];
-
-  while ((foundIndex = goog.uri.utils.findParam_(
-              uri, position, keyEncoded, hashOrEndIndex)) >= 0) {
-    // Find where this parameter ends, either the '&' or the end of the
-    // query parameters.
-    position = uri.indexOf('&', foundIndex);
-    if (position < 0 || position > hashOrEndIndex) {
-      position = hashOrEndIndex;
-    }
-
-    // Progress forth to the end of the "key=" or "key&" substring.
-    foundIndex += keyEncoded.length + 1;
-    // Use substr, because it (unlike substring) will return empty string
-    // if foundIndex > position.
-    result.push(
-        goog.string.urlDecode(uri.substr(foundIndex, position - foundIndex)));
-  }
-
-  return result;
-};
-
-
-/**
- * Regexp to find trailing question marks and ampersands.
- * @type {RegExp}
- * @private
- */
-goog.uri.utils.trailingQueryPunctuationRe_ = /[?&]($|#)/;
-
-
-/**
- * Removes all instances of a query parameter.
- * @param {string} uri The URI to process.  Must not contain a fragment.
- * @param {string} keyEncoded The URI-encoded key.
- * @return {string} The URI with all instances of the parameter removed.
- */
-goog.uri.utils.removeParam = function(uri, keyEncoded) {
-  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
-  var position = 0;
-  var foundIndex;
-  var buffer = [];
-
-  // Look for a query parameter.
-  while ((foundIndex = goog.uri.utils.findParam_(
-              uri, position, keyEncoded, hashOrEndIndex)) >= 0) {
-    // Get the portion of the query string up to, but not including, the ?
-    // or & starting the parameter.
-    buffer.push(uri.substring(position, foundIndex));
-    // Progress to immediately after the '&'.  If not found, go to the end.
-    // Avoid including the hash mark.
-    position = Math.min(
-        (uri.indexOf('&', foundIndex) + 1) || hashOrEndIndex, hashOrEndIndex);
-  }
-
-  // Append everything that is remaining.
-  buffer.push(uri.substr(position));
-
-  // Join the buffer, and remove trailing punctuation that remains.
-  return buffer.join('').replace(
-      goog.uri.utils.trailingQueryPunctuationRe_, '$1');
-};
-
-
-/**
- * Replaces all existing definitions of a parameter with a single definition.
- *
- * Repeated calls to this can exhibit quadratic behavior due to the need to
- * find existing instances and reconstruct the string, though it should be
- * limited given the 2kb limit.  Consider using appendParams to append multiple
- * parameters in bulk.
- *
- * @param {string} uri The original URI, which may already have query data.
- * @param {string} keyEncoded The key, which must already be URI encoded.
- * @param {*} value The value, which will be stringized and encoded (assumed
- *     not already to be encoded).
- * @return {string} The URI with the query parameter added.
- */
-goog.uri.utils.setParam = function(uri, keyEncoded, value) {
-  return goog.uri.utils.appendParam(
-      goog.uri.utils.removeParam(uri, keyEncoded), keyEncoded, value);
-};
-
-
-/**
- * Generates a URI path using a given URI and a path with checks to
- * prevent consecutive "//". The baseUri passed in must not contain
- * query or fragment identifiers. The path to append may not contain query or
- * fragment identifiers.
- *
- * @param {string} baseUri URI to use as the base.
- * @param {string} path Path to append.
- * @return {string} Updated URI.
- */
-goog.uri.utils.appendPath = function(baseUri, path) {
-  goog.uri.utils.assertNoFragmentsOrQueries_(baseUri);
-
-  // Remove any trailing '/'
-  if (goog.string.endsWith(baseUri, '/')) {
-    baseUri = baseUri.substr(0, baseUri.length - 1);
-  }
-  // Remove any leading '/'
-  if (goog.string.startsWith(path, '/')) {
-    path = path.substr(1);
-  }
-  return goog.string.buildString(baseUri, '/', path);
-};
-
-
-/**
- * Replaces the path.
- * @param {string} uri URI to use as the base.
- * @param {string} path New path.
- * @return {string} Updated URI.
- */
-goog.uri.utils.setPath = function(uri, path) {
-  // Add any missing '/'.
-  if (!goog.string.startsWith(path, '/')) {
-    path = '/' + path;
-  }
-  var parts = goog.uri.utils.split(uri);
-  return goog.uri.utils.buildFromEncodedParts(
-      parts[goog.uri.utils.ComponentIndex.SCHEME],
-      parts[goog.uri.utils.ComponentIndex.USER_INFO],
-      parts[goog.uri.utils.ComponentIndex.DOMAIN],
-      parts[goog.uri.utils.ComponentIndex.PORT], path,
-      parts[goog.uri.utils.ComponentIndex.QUERY_DATA],
-      parts[goog.uri.utils.ComponentIndex.FRAGMENT]);
-};
-
-
-/**
- * Standard supported query parameters.
- * @enum {string}
- */
-goog.uri.utils.StandardQueryParam = {
-
-  /** Unused parameter for unique-ifying. */
-  RANDOM: 'zx'
-};
-
-
-/**
- * Sets the zx parameter of a URI to a random value.
- * @param {string} uri Any URI.
- * @return {string} That URI with the "zx" parameter added or replaced to
- *     contain a random string.
- */
-goog.uri.utils.makeUnique = function(uri) {
-  return goog.uri.utils.setParam(
-      uri, goog.uri.utils.StandardQueryParam.RANDOM,
-      goog.string.getRandomString());
-};
-
-goog.provide('ngeo.Query');
-
-goog.require('ngeo');
-goog.require('ngeo.LayerHelper');
-goog.require('ol.format.WFS');
-goog.require('ol.format.WMSGetFeatureInfo');
-goog.require('ol.obj');
-goog.require('ol.source.ImageWMS');
-goog.require('ol.source.TileWMS');
-goog.require('goog.uri.utils');
-
-
-/**
- * @enum {string}
- */
-ngeo.QueryInfoFormatType = {
-  GML: 'application/vnd.ogc.gml'
-};
-
-
-/**
- * @typedef {{
- *     resultSource: (ngeox.QueryResultSource),
- *     source: (ngeox.QuerySource)
- * }}
- */
-ngeo.QueryCacheItem;
-
-
-/**
- * @typedef {{
- *     wms: (Object.<string, Array.<ngeo.QueryCacheItem>>),
- *     wfs: (Object.<string, Array.<ngeo.QueryCacheItem>>)
- * }}
- */
-ngeo.QueryableSources;
-
-
-/**
- * The `ngeoQueryResult` is the value service where the features of the query
- * result are added.
- */
-ngeo.module.value('ngeoQueryResult', /** @type {ngeox.QueryResult} */ ({
-  sources: [],
-  total: 0,
-  pending: false
-}));
-
-
-/**
- * The Query service provides a way to send WMS GetFeatureInfo and WFS GetFeature
- * requests from visible layer objects within a map. Those do not necessarily need to have
- * a WMS source. The Query service requires source configuration in order
- * for layers to actually be considered queryable.
- *
- * To know more about the specification of a source configuration, see
- * `ngeox.QuerySource`
- *
- * @constructor
- * @struct
- * @param {angular.$http} $http Angular $http service.
- * @param {angular.$q} $q The Angular $q service.
- * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
- * @param {ngeox.QueryOptions|undefined} ngeoQueryOptions The options to
- *     configure the ngeo query service with.
- * @param {ngeo.LayerHelper} ngeoLayerHelper Ngeo Layer Helper.
- * @ngdoc service
- * @ngname ngeoQuery
- * @ngInject
- */
-ngeo.Query = function($http, $q, ngeoQueryResult, ngeoQueryOptions,
-    ngeoLayerHelper) {
-
-  var options = ngeoQueryOptions !== undefined ? ngeoQueryOptions : {};
-
-
-  /**
-   * @type {Object.<string, string>}
-   */
-  this.dimensions = {};
-
-  /**
-   * @type {number}
-   * @private
-   */
-  this.limit_ = options.limit !== undefined ? options.limit : 50;
-
-  /**
-   * @type {boolean}
-   * @private
-   */
-  this.queryCountFirst_ = options.queryCountFirst !== undefined ?
-      options.queryCountFirst : false;
-
-  /**
-   * @type {string}
-   * @private
-   */
-  this.sourceIdsProperty_ = options.sourceIdsProperty !== undefined ?
-      options.sourceIdsProperty : ngeo.Query.DEFAULT_SOURCE_IDS_PROPERTY_;
-
-  /**
-   * @type {number}
-   * @private
-   */
-  this.tolerancePx_ = options.tolerance !== undefined ?
-      options.tolerance : 3;
-
-  /**
-   * @type {string}
-   * @private
-   */
-  this.featureNS_ = options.featureNS !== undefined ?
-      options.featureNS : 'http://mapserver.gis.umn.edu/mapserver';
-
-  /**
-   * @type {string}
-   * @private
-   */
-  this.featurePrefix_ = options.featurePrefix !== undefined ?
-      options.featurePrefix : 'feature';
-
-  /**
-   * @type {string}
-   * @private
-   */
-  this.geometryName_ = options.geometryName !== undefined ?
-      options.geometryName : 'the_geom';
-
-  /**
-   * @type {ngeo.LayerHelper}
-   * @private
-   */
-  this.ngeoLayerHelper_ = ngeoLayerHelper;
-
-  /**
-   * @type {angular.$http}
-   * @private
-   */
-  this.$http_ = $http;
-
-  /**
-   * @type {angular.$q}
-   * @private
-   */
-  this.$q_ = $q;
-
-  /**
-   * @type {ngeox.QueryResult}
-   * @private
-   */
-  this.result_ = ngeoQueryResult;
-
-  /**
-   * @type {Array.<ngeox.QuerySource>}
-   * @private
-   */
-  this.sources_ = [];
-
-  /**
-   * @type {Object.<number|string, ngeo.QueryCacheItem>}
-   * @private
-   */
-  this.cache_ = {};
-
-  /**
-   * Promises that can be resolved to cancel started requests.
-   * @type {Array.<angular.$q.Deferred>}
-   * @private
-   */
-  this.requestCancelers_ = [];
-};
-
-
-/**
- * @const
- * @private
- */
-ngeo.Query.DEFAULT_SOURCE_IDS_PROPERTY_ = 'querySourceIds';
-
-
-/**
- * Adds a new source to the query service.
- *
- * A source must at least have an `id` configured.  That id is then used to
- * associate the corresponding layer object within a map.
- *
- * A source will require a `ol.source.ImageWMS` or `ol.source.TileWMS` object.
- * You can either set it directly in the config, or use the one from a given
- * layer or let the query service create one for you using other source config
- * such as `url` and `params`.
- *
- * A source can be set with either a `format` and/or `infoFormat`, which will
- * determine how the returned features of a query will be read.
- *
- * This method will also create a result entry in the `ngeoQueryResult`
- * value service.
- *
- * @param {ngeox.QuerySource} source The source to add to the query service.
- * @export
- */
-ngeo.Query.prototype.addSource = function(source) {
-  var sourceId = source.id;
-
-  goog.asserts.assert(sourceId, 'source.id should be thruthy');
-  goog.asserts.assert(!this.cache_[sourceId],
-      'no other source with the same id should be present');
-
-  // == wmsSource ==
-  // if the source doesn't have a wmsSource property set, it must at least have
-  // a layer that has one or have the required configuration options in order
-  // to create one.
-  if (!source.wmsSource) {
-    if (source.layer &&
-        (source.layer instanceof ol.layer.Image ||
-         source.layer instanceof ol.layer.Tile)) {
-      var wmsSource = source.layer.getSource();
-      if (wmsSource &&
-          (wmsSource instanceof ol.source.ImageWMS ||
-           wmsSource instanceof ol.source.TileWMS)) {
-        source.wmsSource =
-            /** @type {ol.source.ImageWMS|ol.source.TileWMS} */ (wmsSource);
-      }
-    } else {
-      var url = source.url;
-      var params = source.params;
-      goog.asserts.assert(url,
-          'url must be set when no layer or wmsSource is set in the source');
-      goog.asserts.assert(params,
-          'parmas must be set when no layer or wmsSource is set in the source');
-      source.wmsSource = new ol.source.ImageWMS({
-        url: url,
-        params: params
-      });
-    }
-  }
-  goog.asserts.assert(source.wmsSource, 'wmsSource should be thruthy');
-
-  // == format ==
-  if (!source.format) {
-    // GML is the default infoFormat if the source doesn't have one defined
-    if (!source.infoFormat) {
-      source.infoFormat = ngeo.QueryInfoFormatType.GML;
-    }
-
-    var layers = source.wmsSource.getParams()['LAYERS'].split(',');
-
-    if (source.infoFormat === ngeo.QueryInfoFormatType.GML) {
-      source.format = new ol.format.WMSGetFeatureInfo({
-        layers: layers
-      });
-    }
-  } else if (!source.infoFormat) {
-    // == infoFormat ==
-    var format = source.format;
-    if (format instanceof ol.format.WMSGetFeatureInfo) {
-      source.infoFormat = ngeo.QueryInfoFormatType.GML;
-    }
-  }
-  goog.asserts.assert(source.format, 'format should be thruthy');
-
-  this.sources_.push(source);
-
-  var sourceLabel = source.label !== undefined ? source.label : sourceId;
-
-  var sourceIdentifierAttributeField =
-      source.identifierAttributeField !== undefined ?
-      source.identifierAttributeField : sourceId;
-
-  var resultSource = /** @type {ngeox.QueryResultSource} */ ({
-    'features': [],
-    'id': sourceId,
-    'identifierAttributeField': sourceIdentifierAttributeField,
-    'label': sourceLabel,
-    'pending': false,
-    'queried': false
-  });
-
-  this.result_.sources.push(resultSource);
-
-  var cacheItem = {
-    'source': source,
-    'resultSource': resultSource
-  };
-  this.cache_[sourceId] = cacheItem;
-};
-
-
-/**
- * Add multiple sources at once in the order they are given.
- * @param {Array.<ngeox.QuerySource>} sources The sources to add to the query
- *     service.
- * @export
- */
-ngeo.Query.prototype.addSources = function(sources) {
-  sources.forEach(this.addSource, this);
-};
-
-
-/**
- * Clear the results.
- * @export
- */
-ngeo.Query.prototype.clear = function() {
-  this.clearResult_();
-};
-
-
-/**
- * Remove all sources.
- * @export
- */
-ngeo.Query.prototype.removeAllSources = function() {
-  this.result_.sources.length = 0;
-  this.sources_.length = 0;
-  this.cache_ = {};
-};
-
-
-/**
- * Issue a new request using a given map and a given object, which can be
- * a coordinate or extent.
- *
- * When given a coordinate, WMS GetFeatureInfo or WFS GetFeature requests will
- * be made. If a layer supports WFS, a GetFeature request with a bbox around the
- * coordinate are issued.
- *
- * For an extent, WFS GetFeature is used.
- *
- * @param {ol.Map} map The ol3 map object to fetch the layers from.
- * @param {ol.Coordinate|ol.Extent} object The coordinate or extent to issue
- *     the request with.
- * @export
- */
-ngeo.Query.prototype.issue = function(map, object) {
-  this.cancelStillRunningRequests_();
-  this.clearResult_();
-
-  if (object.length === 2) {
-    this.issueIdentifyFeaturesRequests_(map, object);
-  } else {
-    goog.asserts.assert(object.length === 4, 'expecting extent');
-    this.issueGetFeatureRequests_(map, object);
-  }
-};
-
-
-/**
- * Issue WMS GetFeatureInfo or WFS GetFeature requests using the given
- * coordinate and map.
- * For each visible layer of the map, if that layer has a source configured
- * within this query service, then a query will be sent and the results
- * will be stocked in the `ngeoQueryResult`.
- *
- * For WMS GetFeatureInfo, gf multiple sources share the same url and use GML
- * as info format, then only one request will be sent for all these sources.
- *
- * NOTE: Only GML info format are currently supported.
- *
- * @param {ol.Map} map The ol3 map object to fetch the layers from.
- * @param {ol.Coordinate} coordinate The coordinate to issue the request with.
- * @private
- */
-ngeo.Query.prototype.issueIdentifyFeaturesRequests_ = function(map, coordinate) {
-  var sources = this.getQueryableSources_(map, false);
-
-  this.doGetFeatureInfoRequests_(sources.wms, coordinate, map);
-  this.doGetFeatureRequestsWithCoordinate_(sources.wfs, coordinate, map);
-  this.updatePendingState_();
-};
-
-
-/**
- * Issue WFS GetFeature requests using the given extent for each visible layer
- * of the map.
- *
- * @param {ol.Map} map The ol3 map object to fetch the layers from.
- * @param {ol.Extent} extent The coordinate to issue the request with.
- * @private
- */
-ngeo.Query.prototype.issueGetFeatureRequests_ = function(map, extent) {
-  var sources = this.getQueryableSources_(map, true);
-  this.doGetFeatureRequests_(sources.wfs, extent, map);
-  this.updatePendingState_();
-};
-
-
-/**
- * @param {ol.Map} map Map.
- * @param {boolean} wfsOnly Only get sources queryable via WFS.
- * @return {ngeo.QueryableSources} Queryable sources.
- * @private
- */
-ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
-
-  var wmsItemsByUrl =
-      /** @type {Object.<string, Array.<ngeo.QueryCacheItem>>} */ ({});
-  var wfsItemsByUrl =
-      /** @type {Object.<string, Array.<ngeo.QueryCacheItem>>} */ ({});
-
-  var layers = this.ngeoLayerHelper_.getFlatLayers(map.getLayerGroup());
-
-  layers.forEach(function(layer) {
-
-    // Skip layers that are not visible
-    if (!this.ngeoLayerHelper_.isLayerVisible(layer, map)) {
-      return;
-    }
-
-    // Skip layers that don't have one or more sources configured
-    var ids = this.getLayerSourceIds_(layer);
-    if (ids.length === 0) {
-      return;
-    }
-
-    var infoFormat;
-    var url;
-    var item;
-    for (var i = 0, len = ids.length; i < len; i++) {
-      var id = ids[i];
-      item = this.cache_[id];
-      if (!item) {
-        continue;
-      }
-
-      // If `validateLayerParams` is set, then the source config layer in the
-      // LAYERS params must be in the current LAYERS params of the layer
-      // wms source object.
-      if (item.source.validateLayerParams) {
-        goog.asserts.assert(
-            layer instanceof ol.layer.Image ||
-            layer instanceof ol.layer.Tile,
-            'The layer should be an Image or Tile when using the ' +
-            'validateLayerParams option.'
-        );
-        var layerSource = layer.getSource();
-        goog.asserts.assert(
-            layerSource instanceof ol.source.ImageWMS ||
-            layerSource instanceof ol.source.TileWMS,
-            'The layer source should be a WMS one when using the ' +
-            'validateLayerParams option.'
-        );
-        var layerLayers = layerSource.getParams()['LAYERS'].split(',');
-        var cfgLayer = item.source.layers.split(',');
-
-        var layerIsOnTheMap = cfgLayer.some(function(layer) {
-          return layerLayers.indexOf(layer) > -1;
-        });
-        if (!layerIsOnTheMap) {
-          continue;
-        }
-      }
-
-      if (item.source.wfsQuery) {
-        // use WFS GetFeature
-        url = item.source.urlWfs || item.source.wmsSource.getUrl();
-        goog.asserts.assertString(url);
-        if (!wfsItemsByUrl[url]) {
-          wfsItemsByUrl[url] = [];
-        }
-        this.pushSourceIfUnique_(item, wfsItemsByUrl[url]);
-      } else if (!wfsOnly) {
-        // use WMF GetFeatureInfo
-        infoFormat = item.source.infoFormat;
-
-        // Sources that use GML as info format are combined together if they
-        // share the same server url
-        if (infoFormat === ngeo.QueryInfoFormatType.GML) {
-          url = item.source.wmsSource.getUrl();
-          goog.asserts.assertString(url);
-          if (!wmsItemsByUrl[url]) {
-            wmsItemsByUrl[url] = [];
-          }
-          this.pushSourceIfUnique_(item, wmsItemsByUrl[url]);
-        } else {
-          // TODO - support other kinds of infoFormats
-        }
-      }
-    }
-  }, this);
-
-  return {
-    wms: wmsItemsByUrl,
-    wfs: wfsItemsByUrl
-  };
-};
-
-
-/**
- * Push source if and only if not already in the array. it aims to add a unicity
- * constraint on sources.
- *
- * The 'id' of a source object is taken from the 'id' property of the
- * node object (in the tree). Under the wood, the 'id' property of a node is filled
- * regarding the layer attached to it. therefore, Two nodes with the same layer ,
- * attached will have the same 'id'. We must avoid multiple identical request.
- * @param  {ngeo.QueryCacheItem} item  The QueryCache item to push in the array
- * @param  {Array.<ngeo.QueryCacheItem>} array QueryCacheItem array
- * @return {boolean} true if the item has been added, false otherwise.
- * @private
- */
-ngeo.Query.prototype.pushSourceIfUnique_ = function(item, array) {
-  var isUnique = array.indexOf(item) < 0;
-  if (isUnique) {
-    array.push(item);
-  }
-  return isUnique;
-};
-
-/**
- * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wmsItemsByUrl Queryable
- *    layers for GetFeatureInfo
- * @param {ol.Coordinate} coordinate Query coordinate
- * @param {ol.Map} map Map
- * @private
- */
-ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
-    wmsItemsByUrl, coordinate, map) {
-  var view = map.getView();
-  var projCode = view.getProjection().getCode();
-  var resolution = /** @type {number} */(view.getResolution());
-
-  angular.forEach(wmsItemsByUrl, function(items) {
-
-    items.forEach(function(item) {
-      item['resultSource'].pending = true;
-      item['resultSource'].queried = true;
-    });
-
-    var infoFormat = items[0].source.infoFormat;
-    var wmsGetFeatureInfoUrl = items[0].source.wmsSource.getGetFeatureInfoUrl(
-        coordinate, resolution, projCode, {
-          'INFO_FORMAT': infoFormat,
-          'FEATURE_COUNT': this.limit_
-        });
-
-    goog.asserts.assert(
-        wmsGetFeatureInfoUrl, 'WMS GetFeatureInfo url should be thruty');
-
-    var layers = this.getLayersForItems_(items);
-    var lyrStr = layers.join(',');
-
-    wmsGetFeatureInfoUrl =
-        goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'LAYERS', lyrStr);
-    wmsGetFeatureInfoUrl =
-        goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'QUERY_LAYERS', lyrStr);
-
-    // add dimensions values
-    var dimensions = items[0].source.dimensions;
-    if (dimensions) {
-      for (var key in dimensions) {
-        // get the value from the global dimensions
-        var value = this.dimensions[key];
-        if (value === undefined) {
-          // get the value from the layer default value
-          value = dimensions[key];
-        }
-        if (value !== undefined) {
-          wmsGetFeatureInfoUrl = goog.uri.utils.setParam(wmsGetFeatureInfoUrl, key, value);
-        }
-      }
-    }
-
-    var canceler = this.registerCanceler_();
-    this.$http_.get(wmsGetFeatureInfoUrl, {timeout: canceler.promise})
-        .then(function(items, response) {
-          items.forEach(function(item) {
-            item['resultSource'].pending = false;
-            var format = item.source.format;
-            var features = format.readFeatures(response.data);
-            this.setUniqueIds_(features, item.source.id);
-            item['resultSource'].features = features;
-            this.result_.total += features.length;
-          }, this);
-          this.updatePendingState_();
-        }.bind(this, items));
-  }, this);
-};
-
-
-/**
- * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wfsItemsByUrl Queryable
- *    layers for GetFeature
- * @param {ol.Coordinate} coordinate Query coordinate
- * @param {ol.Map} map Map
- * @private
- */
-ngeo.Query.prototype.doGetFeatureRequestsWithCoordinate_ = function(
-    wfsItemsByUrl, coordinate, map) {
-  var view = map.getView();
-  var bbox = this.getQueryBbox_(coordinate, view);
-  this.doGetFeatureRequests_(wfsItemsByUrl, bbox, map);
-};
-
-
-/**
- * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wfsItemsByUrl Queryable
- *    layers for GetFeature
- * @param {ol.Extent} bbox Query bbox
- * @param {ol.Map} map Map
- * @private
- */
-ngeo.Query.prototype.doGetFeatureRequests_ = function(
-    wfsItemsByUrl, bbox, map) {
-  var view = map.getView();
-  var projCode = view.getProjection().getCode();
-  var wfsFormat = new ol.format.WFS();
-  var xmlSerializer = new XMLSerializer();
-
-  angular.forEach(wfsItemsByUrl, function(items, url) {
-    items.forEach(function(item) {
-      var layers = this.getLayersForItem_(item);
-
-      if (layers.length == 0 || layers[0] === '') {
-        // do not query source if no valid layers
-        return;
-      }
-
-      item['resultSource'].pending = true;
-      item['resultSource'].queried = true;
-
-      /** @type{olx.format.WFSWriteGetFeatureOptions} */
-      var getFeatureOptions = {
-        srsName: projCode,
-        featureNS: this.featureNS_,
-        featurePrefix: this.featurePrefix_,
-        featureTypes: layers,
-        outputFormat: 'GML3',
-        bbox: bbox,
-        geometryName: this.geometryName_
-      };
-
-      var sourceFormat = new ol.format.WFS({
-        featureType: layers,
-        featureNS: this.featureNS_
-      });
-
-      var getFeatures = function() {
-        /** @type{olx.format.WFSWriteGetFeatureOptions} */
-        var options = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.obj.assign({
-          maxFeatures: this.limit_
-        }, getFeatureOptions));
-        var featureRequestXml = wfsFormat.writeGetFeature(options);
-        var featureRequest = xmlSerializer.serializeToString(featureRequestXml);
-
-        var canceler = this.registerCanceler_();
-        this.$http_.post(url, featureRequest, {timeout: canceler.promise})
-            .then(function(response) {
-              item['resultSource'].pending = false;
-              var features = sourceFormat.readFeatures(response.data);
-              this.setUniqueIds_(features, item.source.id);
-              item['resultSource'].features = features;
-              this.result_.total += features.length;
-              this.updatePendingState_();
-            }.bind(this));
-      }.bind(this);
-
-      if (this.queryCountFirst_) {
-        var getCountOptions = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.obj.assign({
-          resultType: 'hits'
-        }, getFeatureOptions));
-        var featureCountXml = wfsFormat.writeGetFeature(getCountOptions);
-        var featureCountRequest = xmlSerializer.serializeToString(featureCountXml);
-
-        var canceler = this.registerCanceler_();
-        this.$http_.post(url, featureCountRequest, {timeout: canceler.promise})
-            .then(function(response) {
-              var meta = sourceFormat.readFeatureCollectionMetadata(response.data);
-              if (meta['numberOfFeatures'] > this.limit_) {
-                item['resultSource'].pending = false;
-                item['resultSource'].features = [];
-                item['resultSource'].tooManyResults = true;
-                item['resultSource'].totalFeatureCount = meta['numberOfFeatures'];
-                this.updatePendingState_();
-              } else {
-                getFeatures();
-              }
-            }.bind(this));
-      } else {
-        getFeatures();
-      }
-    }.bind(this));
-  }.bind(this));
-};
-
-/**
- * Clear every features for all result sources and reset the total counter
- * as well.
- * @private
- */
-ngeo.Query.prototype.clearResult_ = function() {
-  this.result_.total = 0;
-  this.result_.sources.forEach(function(source) {
-    source.features.length = 0;
-    source.pending = false;
-    source.queried = false;
-    source.tooManyResults = false;
-    source.totalFeatureCount = undefined;
-  }, this);
-  this.result_.pending = false;
-};
-
-
-/**
- * Returns the source ids from an ol3 layer object.
- * @param {ol.layer.Base} layer The ol3 layer object.
- * @return {Array.<number|string>} ids The ids of the sources bound to that
- *     layer.
- * @private
- */
-ngeo.Query.prototype.getLayerSourceIds_ = function(layer) {
-  var ids = layer.get(this.sourceIdsProperty_) || [];
-  goog.asserts.assertArray(ids);
-  var clone = ids.slice();
-  return clone;
-};
-
-
-/**
- * @param {ngeo.QueryCacheItem} item Cache item
- * @return {Array.<string>} Layer names
- * @private
- */
-ngeo.Query.prototype.getLayersForItem_ = function(item) {
-  return item.source.wmsSource.getParams()['LAYERS'].split(',');
-};
-
-
-/**
- * @param {Array.<ngeo.QueryCacheItem>} items Cache items
- * @return {Array.<string>} Layer names
- * @private
- */
-ngeo.Query.prototype.getLayersForItems_ = function(items) {
-  var layers = this.getLayersForItem_(items[0]);
-  for (var i = 1, len = items.length; i < len; i++) {
-    layers = layers.concat(this.getLayersForItem_(items[i]));
-  }
-  return layers;
-};
-
-
-/**
- * Make sure that feature ids are unique, because the same features might
- * be returned for different layers.
- * @param {Array.<ol.Feature>} features Features
- * @param {string|number} sourceId Source id.
- * @private
- */
-ngeo.Query.prototype.setUniqueIds_ = function(features, sourceId) {
-  features.forEach(function(feature) {
-    if (feature.getId() !== undefined) {
-      var id = sourceId + '_' + feature.getId();
-      feature.setId(id);
-    }
-  });
-};
-
-
-/**
- * Construct a bbox around a coordinate with a tolerance relative to the
- * current resolution.
- * @param {ol.Coordinate} coordinate Coordinate
- * @param {ol.View} view View
- * @return {ol.Extent} Bbox
- * @private
- */
-ngeo.Query.prototype.getQueryBbox_ = function(coordinate, view) {
-  var tolerance = this.tolerancePx_ * view.getResolution();
-
-  return ol.extent.buffer(
-      ol.extent.createOrUpdateFromCoordinate(coordinate),
-      tolerance);
-};
-
-
-/**
- * @return {angular.$q.Deferred} A deferred that can be resolved to cancel a
- *    HTTP request.
- * @private
- */
-ngeo.Query.prototype.registerCanceler_ = function() {
-  var canceler = this.$q_.defer();
-  this.requestCancelers_.push(canceler);
-  return canceler;
-};
-
-
-/**
- * @private
- */
-ngeo.Query.prototype.cancelStillRunningRequests_ = function() {
-  this.requestCancelers_.forEach(function(canceler) {
-    canceler.resolve();
-  });
-  this.requestCancelers_.length = 0;
-};
-
-
-ngeo.Query.prototype.updatePendingState_ = function() {
-  var pendingSources = 0;
-  this.result_.sources.forEach(function(source) {
-    if (source.pending) {
-      pendingSources++;
-    }
-  });
-  this.result_.pending = pendingSources > 0;
-};
-
-
-/**
- * @returns {number} The maximum number of features that are requested.
- * @public
- */
-ngeo.Query.prototype.getLimit = function() {
-  return this.limit_;
-};
-
-
-ngeo.module.service('ngeoQuery', ngeo.Query);
-
-goog.provide('ngeo.bboxQueryDirective');
-
-goog.require('ngeo');
-goog.require('ngeo.Query');
-goog.require('ol.interaction.DragBox');
-
-
-/**
- * Provides a "bbox query" directive.
- *
- * This directive is responsible of binding a map and the ngeo query service
- * together. While active, drawing a bbox while CTRL or the 'meta' key is pressed
- * issues a request to the query service.
- *
- * This directive doesn't require to be rendered in a visible DOM element, but
- * it could be used with a ngeo-btn to manage the activation of the directive.
- * See below an example without any use of UI:
- *
- * Example:
- *
- *      <span
- *        ngeo-bbox-query=""
- *        ngeo-bbox-query-map="::ctrl.map"
- *        ngeo-bbox-query-active="ctrl.queryActive">
- *        ngeo-bbox-query-autoclear="ctrl.queryAutoClear">
- *      </span>
- *
- * See the live example: [../examples/bboxquery.html](../examples/bboxquery.html)
- *
- * @param {ngeo.Query} ngeoQuery The ngeo Query service.
- * @return {angular.Directive} The Directive Definition Object.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoBboxQuery
- */
-ngeo.bboxQueryDirective = function(ngeoQuery) {
-  return {
-    restrict: 'A',
-    scope: false,
-    link: function(scope, elem, attrs) {
-      /**
-       * @type {ol.Map}
-       */
-      var map = scope.$eval(attrs['ngeoBboxQueryMap']);
-
-      var interaction = new ol.interaction.DragBox({
-        condition: ol.events.condition.platformModifierKeyOnly
-      });
-
-      /**
-       * Called when a bbox is drawn while this controller is active. Issue
-       * a request to the query service using the extent that was drawn.
-       * @param {ol.interaction.DragBox.Event} evt Event.
-       */
-      var handleBoxEnd = function(evt) {
-        var extent = interaction.getGeometry().getExtent();
-        ngeoQuery.issue(map, extent);
-      };
-      interaction.on('boxend', handleBoxEnd);
-
-      // watch 'active' property -> activate/deactivate accordingly
-      scope.$watch(attrs['ngeoBboxQueryActive'],
-          function(newVal, oldVal) {
-            if (newVal) {
-              // activate
-              map.addInteraction(interaction);
-            } else {
-              // deactivate
-              map.removeInteraction(interaction);
-              if (scope.$eval(attrs['ngeoBboxQueryAutoclear']) !== false) {
-                ngeoQuery.clear();
-              }
-            }
-          }
-      );
-    }
-  };
-};
-
-ngeo.module.directive('ngeoBboxQuery', ngeo.bboxQueryDirective);
-
-goog.provide('ngeo.BtnGroupController');
-goog.provide('ngeo.btnDirective');
-goog.provide('ngeo.btngroupDirective');
-
-goog.require('ngeo');
-
-
-/**
- * Provides two directives: ngeo-btn-group and ngeo-btn.
- *
- * The ngeo-btn-group directive allows creating "toggle" groups. It works with
- * the ngeo-btn directive.
- *
- * Example:
- *
- *     <div ngeo-btn-group>
- *       <button ngeo-btn class="btn" ng-model="ctrl.drawPoint.active"></button>
- *       <button ngeo-btn class="btn" ng-model="ctrl.drawLine.active"></button>
- *     </div>
- *
- * In that example the ngeo-btn are combined together in a "toggle group",
- * where activating a button will deactivate the others.
- *
- * One can use `ng-model` directive at the group level in order to know if
- * a button is active.
- *
- * Example:
- *
- *     <div ngeo-btn-group ngeo-btn-group-active="ctrl.drawToolActive">
- *
- * See our live example: [../examples/interactionbtngroup.html](../examples/interactionbtngroup.html)
- *
- * @htmlAttribute {*} ngeo-btn-group-active Any property of the scope.
- * Tells whether at least one button of the group is active.
- * @param {angular.$parse} $parse Angular parse service.
- * @return {angular.Directive} The directive specs.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoBtnGroup
- */
-ngeo.btngroupDirective = function($parse) {
-  return {
-    restrict: 'A',
-    controller: 'ngeoBtnGroupController',
-    link:
-        /**
-         * @param {!angular.Scope} scope Scope.
-         * @param {angular.JQLite} element Element.
-         * @param {angular.Attributes} attrs Attributes.
-         * @param {!Object} controller Controller.
-         */
-        function(scope, element, attrs, controller) {
-          var setActive = $parse(attrs['ngeoBtnGroupActive']).assign;
-
-          if (setActive) {
-            scope.$watch(function() {
-              // return true if at least one button is active otherwise false
-              return controller.buttons_.some(function(buttonModel) {
-                return (buttonModel(scope) === true);
-              });
-            }, function(newValue) {
-              setActive(scope, newValue);
-            });
-          }
-        }
-  };
-};
-
-
-ngeo.module.directive('ngeoBtnGroup', ngeo.btngroupDirective);
-
-
-/**
- * @param {!angular.Scope} $scope Scope.
- * @constructor
- * @struct
- * @ngInject
- * @ngdoc controller
- * @ngname ngeoBtnGroupController
- */
-ngeo.BtnGroupController = function($scope) {
-  /**
-   * @type {Array.<angular.$parse.Expression>}
-   * @private
-   */
-  this.buttons_ = [];
-
-  /**
-   * @type {!angular.Scope}
-   * @private
-   */
-  this.scope_ = $scope;
-};
-
-
-/**
- * @param {number} index Index of the button in buttons array.
- */
-ngeo.BtnGroupController.prototype.activate = function(index) {
-  this.buttons_.forEach(function(expressionFn, i) {
-    if (i != index) {
-      expressionFn.assign(this.scope_, false);
-    }
-  }, this);
-};
-
-
-/**
- * @param {angular.$parse.Expression} expressionFn Expression function.
- * @return {number} Index of the pushed setter.
- */
-ngeo.BtnGroupController.prototype.addButton = function(expressionFn) {
-  this.buttons_.push(expressionFn);
-  return this.buttons_.length - 1;
-};
-
-
-ngeo.module.controller('ngeoBtnGroupController', ngeo.BtnGroupController);
-
-
-/**
- * The ngeo-btn allows creating toggle buttons working with ng-model. It is
- * typically used with Bootstrap buttons (`btn`).
- *
- * Example:
- *
- *     <button ngeo-btn class="btn" ng-model="ctrl.interaction.active"></button>
- *
- * This example is about creating a Bootstrap button that can pressed/depressed
- * to activate/deactivate an OpenLayers 3 interaction.
- *
- * @htmlAttribute {*} ng-model Any property on the scope. Ideally a boolean.
- * @param {angular.$parse} $parse Angular parse service.
- * @return {angular.Directive} The directive specs.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoBtn
- */
-ngeo.btnDirective = function($parse) {
-  return {
-    require: ['?^ngeoBtnGroup', 'ngModel'],
-    restrict: 'A',
-    link:
-        /**
-         * @param {!angular.Scope} scope Scope.
-         * @param {angular.JQLite} element Element.
-         * @param {angular.Attributes} attrs Attributes.
-         * @param {!Array.<!Object>} ctrls Controllers.
-         */
-        function(scope, element, attrs, ctrls) {
-          var buttonsCtrl = ctrls[0];
-          var ngModelCtrl = ctrls[1];
-          var indexInGroup = -1;
-
-          var ngModelGet = $parse(attrs['ngModel']);
-          var ngModelSet = ngModelGet.assign;
-
-          // Set ng-model value to false if undefined
-          if (ngModelGet(scope) === undefined) {
-            ngModelSet(scope, false);
-          }
-          if (buttonsCtrl !== null) {
-            indexInGroup = buttonsCtrl.addButton(ngModelGet);
-          }
-
-          // UI -> model
-          element.bind('click', function() {
-            scope.$apply(function() {
-              ngModelCtrl.$setViewValue(!ngModelCtrl.$viewValue);
-              ngModelCtrl.$render();
-            });
-          });
-
-          // model -> UI
-          ngModelCtrl.$render = function() {
-            if (ngModelCtrl.$viewValue && buttonsCtrl !== null) {
-              buttonsCtrl.activate(indexInGroup);
-            }
-            element.toggleClass('active', ngModelCtrl.$viewValue);
-          };
-        }
-  };
-};
-
-
-ngeo.module.directive('ngeoBtn', ngeo.btnDirective);
-
-goog.provide('ngeo.ColorpickerController');
-goog.provide('ngeo.colorpickerDirective');
-
-goog.require('ngeo');
-
-
-ngeo.module.value('ngeoColorpickerTemplateUrl',
-    /**
-     * @param {angular.JQLite} element Element.
-     * @param {angular.Attributes} attrs Attributes.
-     * @return {string} Template URL.
-     */
-    function(element, attrs) {
-      var templateUrl = attrs['ngeoColorpickerTemplateurl'];
-      return templateUrl !== undefined ? templateUrl :
-          ngeo.baseTemplateUrl + '/colorpicker.html';
-    });
-
-/**
- * Provides the "ngeoColorpicker" directive, a widget for
- * selecting a color among predefined ones.
- *
- * Example:
- *
- *     <div ngeo-colorpicker="ctrl.colors">
- *     </div>
- *
- *
- * @param {string|function(!angular.JQLite=, !angular.Attributes=)}
- *     ngeoColorpickerTemplateUrl Template URL for the directive.
- * @return {angular.Directive} Directive Definition Object.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoColorpicker
- */
-ngeo.colorpickerDirective = function(ngeoColorpickerTemplateUrl) {
-  return {
-    restrict: 'A',
-    scope: {
-      colors: '<?ngeoColorpicker',
-      color: '=?ngeoColorpickerColor'
-    },
-    controller: 'NgeoColorpickerController',
-    controllerAs: 'ctrl',
-    bindToController: true,
-    templateUrl: ngeoColorpickerTemplateUrl
-  };
-};
-
-
-ngeo.module.directive('ngeoColorpicker', ngeo.colorpickerDirective);
-
-/**
- * @type {Array.<Array.<string>>}
- * @const
- */
-var defaultColors = [
-  ['#F4EB37', '#CDDC39', '#62AF44','#009D57','#0BA9CC','#4186F0','#3F5BA9','#7C3592','#A61B4A','#DB4436','#F8971B','#F4B400','#795046'],
-  ['#F9F7A6','#E6EEA3','#B7DBAB','#7CCFA9','#93D7E8','#9FC3FF','#A7B5D7','#C6A4CF','#D698AD','#EE9C96','#FAD199','#FFDD5E','#B29189'],
-  ['#ffffff', '#CCCCCC', '#777', '#000000']
-];
-
-/**
- * @constructor
- * @struct
- * @param {angular.Scope} $scope Directive scope.
- * @param {angular.JQLite} $element Element.
- * @param {angular.Attributes} $attrs Attributes.
- * @export
- * @ngInject
- * @ngdoc controller
- * @ngname NgeoScaleselectorController
- */
-ngeo.ColorpickerController = function($scope, $element, $attrs) {
-
-  /**
-   * The set of color
-   * @type {Array.<Array.<string>>}
-   * @export
-   */
-  this.colors = defaultColors;
-
-  /**
-   * The selected color
-   * @type {undefined|string}
-   */
-  this.color;
-};
-
-/**
- * @param {string} color The color to select.
- * @export
- */
-ngeo.ColorpickerController.prototype.setColor = function(color) {
-  this.color = color;
-};
-
-
-ngeo.module.controller('NgeoColorpickerController',
-    ngeo.ColorpickerController);
-
-goog.provide('ngeo.controlDirective');
-
-goog.require('goog.asserts');
-goog.require('ngeo');
-goog.require('ol.Map');
-goog.require('ol.control.Control');
-
-
-/**
- * Provides a directive that can be used to add a control to the map
- * using a DOM element.
- *
- * Example:
- *
- *     <div ngeo-control="ctrl.control" ngeo-control-map="ctrl.map"></div>
- *
- * The expression passed to "ngeo-control" should evaluate to a control
- * instance, and the expression passed to "ngeo-control-map" should
- * evaluate to a map instance.
- *
- * See our live example: [../examples/control.html](../examples/control.html)
- *
- * @htmlAttribute {ol.Map} ngeo-control-map The map.
- * @return {angular.Directive} The directive specs.
- * @ngInject
- * @ngdoc directive
- * @ngname ngeoControl
- */
-ngeo.controlDirective = function() {
-  return {
-    restrict: 'A',
-    link:
-        /**
-         * @param {angular.Scope} scope Scope.
-         * @param {angular.JQLite} element Element.
-         * @param {angular.Attributes} attrs Attributes.
-         */
-        function(scope, element, attrs) {
-
-          var control = /** @type {ol.control.Control} */
-              (scope.$eval(attrs['ngeoControl']));
-          goog.asserts.assertInstanceof(control, ol.control.Control);
-
-          var map = /** @type {ol.Map} */
-              (scope.$eval(attrs['ngeoControlMap']));
-          goog.asserts.assertInstanceof(map, ol.Map);
-
-          control.setTarget(element[0]);
-          map.addControl(control);
-        }
-  };
-};
-
-
-ngeo.module.directive('ngeoControl', ngeo.controlDirective);
-
-goog.provide('ngeo.filters');
-
-goog.require('ngeo');
-
-/**
- * Format a number as a localized scale.
- * For instance:
- *  - For 'fr-CH' the value 25000 will become '1 : 25 000'.
- *  - For 'en-US' the value 25000 will become '1 : 25,000'.
- *
- * Example:
- *
- *      <p>{{25000 | ngeoScalify}}</p>
- *
- *
- * @param {angular.$filter} $filter Angular filter
- * @return {function(number): string} A function to format number into a 'scale'
- *     string.
- * @ngInject
- * @ngdoc filter
- * @ngname ngeoScalify
- */
-ngeo.Scalify = function($filter) {
-  var numberFilter = $filter('number');
-  return function(scale) {
-    var text = numberFilter(scale, 0);
-    return text ? '1\u00a0:\u00a0' + text : '';
-  };
-};
-
-ngeo.module.filter('ngeoScalify', ngeo.Scalify);
-
-/**
- * A filter used to format a number with a precision, using the locale.
- *
- * Arguments:
- * - opt_precision: The used precision, default is 3.
- *
- * Examples:
- *
- *      {{0.1234 | ngeoNumber}} => 0.123
- *      {{1.234 | ngeoNumber}} => 1.23
- *      {{12.34 | ngeoNumber}} => 12.3
- *      {{123.4 | ngeoNumber}} => 123
- *      {{1234 | ngeoNumber}} => 1230
- *
- * @param {angular.$locale} $locale Angular locale
- * @return {ngeox.number} Function used to format number into a string.
- * @ngInject
- * @ngdoc filter
- * @ngname ngeoNumber
- */
-ngeo.Number = function($locale) {
-  var formats = $locale.NUMBER_FORMATS;
-
-  /**
-   * @param {number} number The number to format.
-   * @param {number=} opt_precision The used precision, default is 3.
-   * @return {string} The formatted string.
-   */
-  var result = function(number, opt_precision) {
-    var groupSep = formats.GROUP_SEP;
-    var decimalSep = formats.DECIMAL_SEP;
-    if (opt_precision === undefined) {
-      opt_precision = 3;
-    }
-
-    if (number === Infinity) {
-      return '\u221e';
-    } else if (number === -Infinity) {
-      return '-\u221e';
-    } else if (number === 0) {
-      // 0 will creates infinity values
-      return '0';
-    }
-    var sign = number < 0;
-    number = Math.abs(number);
-
-    var nb_decimal = opt_precision - Math.floor(Math.log(number) / Math.log(10)) - 1;
-    var factor = Math.pow(10, nb_decimal);
-    number = Math.round(number * factor);
-    var decimal = '';
-    var unit = Math.floor(number / factor);
-
-    if (nb_decimal > 0) {
-      var str_number = number + '';
-      // 0 padding
-      while (str_number.length < nb_decimal) {
-        str_number = '0' + str_number;
-      }
-      decimal = str_number.substring(str_number.length - nb_decimal);
-      while (decimal[decimal.length - 1] === '0') {
-        decimal = decimal.substring(0, decimal.length - 1);
-      }
-    }
-
-    var groups = [];
-    var str_unit = unit + '';
-    while (str_unit.length > 3) {
-      var index = str_unit.length - 3;
-      groups.unshift(str_unit.substring(index));
-      str_unit = str_unit.substring(0, index);
-    }
-    groups.unshift(str_unit);
-
-    return (sign ? '-' : '') + groups.join(groupSep) + (
-      decimal.length === 0 ? '' : decimalSep + decimal
-    );
-  };
-  return result;
-};
-
-ngeo.module.filter('ngeoNumber', ngeo.Number);
-
-/**
- * A filter used to format a number with the prefix and unit
- *
- * Arguments:
- * - opt_unit: The unit to used, default is ''.
- * - opt_type: (unit|square|binary) the type of units, default is 'unit'.
- * - opt_precision: The used precision, default is 3.
- *
- * Examples:
- *
- *      {{25000 | ngeoUnitPrefix}} => 25 k
- *      {{25000 | ngeoUnitPrefix:m}} => 25 km
- *      {{25000000 | ngeoUnitPrefix:m²:square}} => 25 km²
- *      {{2048 | ngeoUnitPrefix:o:binary}} => 2 Kio
- *
- *
- * @param {angular.$filter} $filter Angular filter
- * @return {ngeox.unitPrefix} Function used to format number into a string.
- * @ngInject
- * @ngdoc filter
- * @ngname ngeoUnitPrefix
- */
-ngeo.UnitPrefix = function($filter) {
-  var numberFilter = $filter('ngeoNumber');
-  var standardPrefix = ['', 'k', 'M', 'G', 'T', 'P'];
-  var binaryPrefix = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi'];
-  /**
-   * @param {number} number The number to format.
-   * @param {string=} opt_unit The unit to used, default is ''.
-   * @param {string=} opt_type (unit|square|binary) the type of units, default is 'unit'.
-   * @param {number=} opt_precision The used precision, default is 3.
-   * @return {string} The formated string.
-   */
-  var result = function(number, opt_unit, opt_type, opt_precision) {
-    if (opt_unit === undefined) {
-      opt_unit = '';
-    }
-    var divisor = 1000;
-    var prefix = standardPrefix;
-    if (opt_type === 'square') {
-      divisor = 1000000;
-    } else if (opt_type === 'binary') {
-      divisor = 1024;
-      prefix = binaryPrefix;
-    }
-
-    var index = 0;
-    var index_max = prefix.length - 1;
-    while (number >= divisor && index < index_max) {
-      number = number / divisor;
-      index++;
-    }
-
-    var postfix = prefix[index] + opt_unit;
-    var space = postfix.length == 0 ? '' : '\u00a0';
-    return numberFilter(number, opt_precision) + space + postfix;
-  };
-  return result;
-};
-
-ngeo.module.filter('ngeoUnitPrefix', ngeo.UnitPrefix);
-
-/**
- * Format a couple of numbers as number coordinates.
- *
- * Example without parameters (en-US localization):
- *
- *      <p>{{[7.1234, 46.9876] | ngeoNumberCoordinates}}</p>
- *      <!-- will Become 7 47 -->
- *
- * Example with defined fractionDigits and template (en-US localization):
- *
- *      <p>{{[7.1234, 46.9876] | ngeoNumberCoordinates:2:co {x} E; {y} N}}</p>
- *      <!-- will Become co 7.12 E; 46.99 N -->
- *
- * Example without fractionDigits but with defined template and localize:
- *
- *      <!-- With en-US localization (opt_localize can be true or undefined) -->
- *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
- *      <!-- will Become 2,600,000, 1,600,000 -->
- *      <br/>
- *      <!-- With fr-CH localization (opt_localize can be true or undefined) -->
- *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
- *      <!-- will Become 2'600'000, 1'600'000 -->
- *      <br/>
- *      <!-- With en-US localization but with localization to false -->
- *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
- *      <!-- will Become 2'600'000, 1'600'000 -->
- *
- * @param {angular.$filter} $filter Angular filter
- * @return {function(ol.Coordinate, (number|string)=, string=,
- *     (boolean|string)=): string} A function to format numbers into
- *     coordinates string.
- * @ngInject
- * @ngdoc filter
- * @ngname ngeoNumberCoordinates
- */
-ngeo.NumberCoordinates = function($filter) {
-  /**
-   * @param {ol.Coordinate} coordinates Array of two numbers.
-   * @param {(number|string)=} opt_fractionDigits Optional number of digit.
-   *     Default to 0.
-   * @param {string=} opt_template Optional template. Default to '{x} {y}'.
-   *     Where "{x}" will be replaced by the first coordinate and "{y}" by the
-   *     second one. Note: Use a html entity to use the semicolon symbole
-   *     into a template.
-   * @return {string} Number formated coordinates.
-   */
-  var filterFn = function(coordinates, opt_fractionDigits, opt_template) {
-    var template = opt_template ? opt_template : '{x} {y}';
-    var x = coordinates[0];
-    var y = coordinates[1];
-    var fractionDigits = parseInt(opt_fractionDigits, 10) | 0;
-    x = $filter('number')(x, fractionDigits);
-    y = $filter('number')(y, fractionDigits);
-    return template.replace('{x}', x).replace('{y}', y);
-  };
-  return filterFn;
-};
-
-ngeo.module.filter('ngeoNumberCoordinates', ngeo.NumberCoordinates);
-
-
-/**
- * Format a couple of numbers as DMS coordinates.
- *
- * Example without parameters:
- *
- *      <p>{{[7.1234, 46.9876] | ngeoDMSCoordinates}}</p>
- *      <!-- will Become 46° 59' 15'' N 7° 07' 24'' E-->
- *
- * Example with defined fractionDigits and a template.
- *
- *      <p>{{[7.1234, 46.9876] | ngeoDMSCoordinates:2:[{x}; {y}]}}</p>
- *      <!-- will Become [46° 59' 15.36'' N; 7° 07' 24.24'' E] -->
- *
- * @return {function(ol.Coordinate, (number|string)=, string=): string} A
- *     function to format numbers into a DMS coordinates string.
- * @ngInject
- * @ngdoc filter
- * @ngname ngeoDMSCoordinates
- */
-ngeo.DMSCoordinates = function() {
-  var degreesToStringHDMS = function(degrees, hemispheres, fractionDigits) {
-    var normalizedDegrees = goog.math.modulo(degrees + 180, 360) - 180;
-    var dms = Math.abs(3600 * normalizedDegrees);
-    var d = Math.floor(dms / 3600);
-    var m = Math.floor((dms / 60) % 60);
-    var s = (dms % 60);
-    return d + '\u00b0 ' +
-        goog.string.padNumber(m, 2) + '\u2032 ' +
-        goog.string.padNumber(s, 2, fractionDigits) + '\u2033 ' +
-        hemispheres.charAt(normalizedDegrees < 0 ? 1 : 0);
-  };
-
-  /**
-   * @param {ol.Coordinate} coordinates Array of two numbers.
-   * @param {(number|string)=} opt_fractionDigits Optional number of digit.
-   *     Default to 0.
-   * @param {string=} opt_template Optional template. Default to
-   *     '{x} {y}'. Where "{x}" will be replaced by the first
-   *     coordinate, {y} by the second one. Note: Use a html entity to use the
-   *     semicolon symbole into a template.
-   * @return {string} DMS formated coordinates.
-   */
-  var filterFn = function(coordinates, opt_fractionDigits, opt_template) {
-    var fractionDigits = parseInt(opt_fractionDigits, 10) | 0;
-
-    var template = opt_template ? opt_template : '{x} {y}';
-
-    var xdms = degreesToStringHDMS(coordinates[1], 'NS', fractionDigits);
-    var ydms = degreesToStringHDMS(coordinates[0], 'EW', fractionDigits);
-
-    return template.replace('{x}', xdms).replace('{y}', ydms);
-  };
-
-  return filterFn;
-};
-
-ngeo.module.filter('ngeoDMSCoordinates', ngeo.DMSCoordinates);
-
-
-/**
- * A filter to mark a value as trusted HTML.
- *
- * Usage:
- *
- *    <p ng-bind-html="ctrl.someValue | ngeoTrustHtml"></p>
- *
- * @return {function(?):string} The filter function.
- * @ngInject
- * @ngdoc filter
- * @param {angular.$sce} $sce Angular sce service.
- * @ngname ngeoTrustHtml
- */
-ngeo.trustHtmlFilter = function($sce) {
-  return function(input) {
-    if (input !== undefined && input !== null) {
-      return $sce.trustAsHtml('' + input);
-    } else {
-      return $sce.trustAsHtml('&nbsp;');
-    }
-  };
-};
-
-ngeo.module.filter('ngeoTrustHtml', ngeo.trustHtmlFilter);
 
 // Copyright 2006 The Closure Library Authors. All Rights Reserved.
 //
@@ -84575,6 +81748,6938 @@ goog.userAgent.DOCUMENT_MODE = (function() {
                       parseInt(goog.userAgent.VERSION, 10) :
                       5);
 })();
+
+// Copyright 2010 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Browser capability checks for the events package.
+ *
+ */
+
+
+goog.provide('goog.events.BrowserFeature');
+
+goog.require('goog.userAgent');
+
+
+/**
+ * Enum of browser capabilities.
+ * @enum {boolean}
+ */
+goog.events.BrowserFeature = {
+  /**
+   * Whether the button attribute of the event is W3C compliant.  False in
+   * Internet Explorer prior to version 9; document-version dependent.
+   */
+  HAS_W3C_BUTTON:
+      !goog.userAgent.IE || goog.userAgent.isDocumentModeOrHigher(9),
+
+  /**
+   * Whether the browser supports full W3C event model.
+   */
+  HAS_W3C_EVENT_SUPPORT:
+      !goog.userAgent.IE || goog.userAgent.isDocumentModeOrHigher(9),
+
+  /**
+   * To prevent default in IE7-8 for certain keydown events we need set the
+   * keyCode to -1.
+   */
+  SET_KEY_CODE_TO_PREVENT_DEFAULT:
+      goog.userAgent.IE && !goog.userAgent.isVersionOrHigher('9'),
+
+  /**
+   * Whether the {@code navigator.onLine} property is supported.
+   */
+  HAS_NAVIGATOR_ONLINE_PROPERTY:
+      !goog.userAgent.WEBKIT || goog.userAgent.isVersionOrHigher('528'),
+
+  /**
+   * Whether HTML5 network online/offline events are supported.
+   */
+  HAS_HTML5_NETWORK_EVENT_SUPPORT:
+      goog.userAgent.GECKO && goog.userAgent.isVersionOrHigher('1.9b') ||
+      goog.userAgent.IE && goog.userAgent.isVersionOrHigher('8') ||
+      goog.userAgent.OPERA && goog.userAgent.isVersionOrHigher('9.5') ||
+      goog.userAgent.WEBKIT && goog.userAgent.isVersionOrHigher('528'),
+
+  /**
+   * Whether HTML5 network events fire on document.body, or otherwise the
+   * window.
+   */
+  HTML5_NETWORK_EVENTS_FIRE_ON_BODY:
+      goog.userAgent.GECKO && !goog.userAgent.isVersionOrHigher('8') ||
+      goog.userAgent.IE && !goog.userAgent.isVersionOrHigher('9'),
+
+  /**
+   * Whether touch is enabled in the browser.
+   */
+  TOUCH_ENABLED:
+      ('ontouchstart' in goog.global ||
+       !!(goog.global['document'] && document.documentElement &&
+          'ontouchstart' in document.documentElement) ||
+       // IE10 uses non-standard touch events, so it has a different check.
+       !!(goog.global['navigator'] &&
+          goog.global['navigator']['msMaxTouchPoints']))
+};
+
+// Copyright 2011 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Definition of the disposable interface.  A disposable object
+ * has a dispose method to to clean up references and resources.
+ * @author nnaze@google.com (Nathan Naze)
+ */
+
+
+goog.provide('goog.disposable.IDisposable');
+
+
+
+/**
+ * Interface for a disposable object.  If a instance requires cleanup
+ * (references COM objects, DOM notes, or other disposable objects), it should
+ * implement this interface (it may subclass goog.Disposable).
+ * @interface
+ */
+goog.disposable.IDisposable = function() {};
+
+
+/**
+ * Disposes of the object and its resources.
+ * @return {void} Nothing.
+ */
+goog.disposable.IDisposable.prototype.dispose = goog.abstractMethod;
+
+
+/**
+ * @return {boolean} Whether the object has been disposed of.
+ */
+goog.disposable.IDisposable.prototype.isDisposed = goog.abstractMethod;
+
+// Copyright 2005 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Implements the disposable interface. The dispose method is used
+ * to clean up references and resources.
+ * @author arv@google.com (Erik Arvidsson)
+ */
+
+
+goog.provide('goog.Disposable');
+/** @suppress {extraProvide} */
+goog.provide('goog.dispose');
+/** @suppress {extraProvide} */
+goog.provide('goog.disposeAll');
+
+goog.require('goog.disposable.IDisposable');
+
+
+
+/**
+ * Class that provides the basic implementation for disposable objects. If your
+ * class holds one or more references to COM objects, DOM nodes, or other
+ * disposable objects, it should extend this class or implement the disposable
+ * interface (defined in goog.disposable.IDisposable).
+ * @constructor
+ * @implements {goog.disposable.IDisposable}
+ */
+goog.Disposable = function() {
+  if (goog.Disposable.MONITORING_MODE != goog.Disposable.MonitoringMode.OFF) {
+    if (goog.Disposable.INCLUDE_STACK_ON_CREATION) {
+      this.creationStack = new Error().stack;
+    }
+    goog.Disposable.instances_[goog.getUid(this)] = this;
+  }
+  // Support sealing
+  this.disposed_ = this.disposed_;
+  this.onDisposeCallbacks_ = this.onDisposeCallbacks_;
+};
+
+
+/**
+ * @enum {number} Different monitoring modes for Disposable.
+ */
+goog.Disposable.MonitoringMode = {
+  /**
+   * No monitoring.
+   */
+  OFF: 0,
+  /**
+   * Creating and disposing the goog.Disposable instances is monitored. All
+   * disposable objects need to call the {@code goog.Disposable} base
+   * constructor. The PERMANENT mode must be switched on before creating any
+   * goog.Disposable instances.
+   */
+  PERMANENT: 1,
+  /**
+   * INTERACTIVE mode can be switched on and off on the fly without producing
+   * errors. It also doesn't warn if the disposable objects don't call the
+   * {@code goog.Disposable} base constructor.
+   */
+  INTERACTIVE: 2
+};
+
+
+/**
+ * @define {number} The monitoring mode of the goog.Disposable
+ *     instances. Default is OFF. Switching on the monitoring is only
+ *     recommended for debugging because it has a significant impact on
+ *     performance and memory usage. If switched off, the monitoring code
+ *     compiles down to 0 bytes.
+ */
+goog.define('goog.Disposable.MONITORING_MODE', 0);
+
+
+/**
+ * @define {boolean} Whether to attach creation stack to each created disposable
+ *     instance; This is only relevant for when MonitoringMode != OFF.
+ */
+goog.define('goog.Disposable.INCLUDE_STACK_ON_CREATION', true);
+
+
+/**
+ * Maps the unique ID of every undisposed {@code goog.Disposable} object to
+ * the object itself.
+ * @type {!Object<number, !goog.Disposable>}
+ * @private
+ */
+goog.Disposable.instances_ = {};
+
+
+/**
+ * @return {!Array<!goog.Disposable>} All {@code goog.Disposable} objects that
+ *     haven't been disposed of.
+ */
+goog.Disposable.getUndisposedObjects = function() {
+  var ret = [];
+  for (var id in goog.Disposable.instances_) {
+    if (goog.Disposable.instances_.hasOwnProperty(id)) {
+      ret.push(goog.Disposable.instances_[Number(id)]);
+    }
+  }
+  return ret;
+};
+
+
+/**
+ * Clears the registry of undisposed objects but doesn't dispose of them.
+ */
+goog.Disposable.clearUndisposedObjects = function() {
+  goog.Disposable.instances_ = {};
+};
+
+
+/**
+ * Whether the object has been disposed of.
+ * @type {boolean}
+ * @private
+ */
+goog.Disposable.prototype.disposed_ = false;
+
+
+/**
+ * Callbacks to invoke when this object is disposed.
+ * @type {Array<!Function>}
+ * @private
+ */
+goog.Disposable.prototype.onDisposeCallbacks_;
+
+
+/**
+ * If monitoring the goog.Disposable instances is enabled, stores the creation
+ * stack trace of the Disposable instance.
+ * @const {string}
+ */
+goog.Disposable.prototype.creationStack;
+
+
+/**
+ * @return {boolean} Whether the object has been disposed of.
+ * @override
+ */
+goog.Disposable.prototype.isDisposed = function() {
+  return this.disposed_;
+};
+
+
+/**
+ * @return {boolean} Whether the object has been disposed of.
+ * @deprecated Use {@link #isDisposed} instead.
+ */
+goog.Disposable.prototype.getDisposed = goog.Disposable.prototype.isDisposed;
+
+
+/**
+ * Disposes of the object. If the object hasn't already been disposed of, calls
+ * {@link #disposeInternal}. Classes that extend {@code goog.Disposable} should
+ * override {@link #disposeInternal} in order to delete references to COM
+ * objects, DOM nodes, and other disposable objects. Reentrant.
+ *
+ * @return {void} Nothing.
+ * @override
+ */
+goog.Disposable.prototype.dispose = function() {
+  if (!this.disposed_) {
+    // Set disposed_ to true first, in case during the chain of disposal this
+    // gets disposed recursively.
+    this.disposed_ = true;
+    this.disposeInternal();
+    if (goog.Disposable.MONITORING_MODE != goog.Disposable.MonitoringMode.OFF) {
+      var uid = goog.getUid(this);
+      if (goog.Disposable.MONITORING_MODE ==
+              goog.Disposable.MonitoringMode.PERMANENT &&
+          !goog.Disposable.instances_.hasOwnProperty(uid)) {
+        throw Error(
+            this + ' did not call the goog.Disposable base ' +
+            'constructor or was disposed of after a clearUndisposedObjects ' +
+            'call');
+      }
+      delete goog.Disposable.instances_[uid];
+    }
+  }
+};
+
+
+/**
+ * Associates a disposable object with this object so that they will be disposed
+ * together.
+ * @param {goog.disposable.IDisposable} disposable that will be disposed when
+ *     this object is disposed.
+ */
+goog.Disposable.prototype.registerDisposable = function(disposable) {
+  this.addOnDisposeCallback(goog.partial(goog.dispose, disposable));
+};
+
+
+/**
+ * Invokes a callback function when this object is disposed. Callbacks are
+ * invoked in the order in which they were added. If a callback is added to
+ * an already disposed Disposable, it will be called immediately.
+ * @param {function(this:T):?} callback The callback function.
+ * @param {T=} opt_scope An optional scope to call the callback in.
+ * @template T
+ */
+goog.Disposable.prototype.addOnDisposeCallback = function(callback, opt_scope) {
+  if (this.disposed_) {
+    callback.call(opt_scope);
+    return;
+  }
+  if (!this.onDisposeCallbacks_) {
+    this.onDisposeCallbacks_ = [];
+  }
+
+  this.onDisposeCallbacks_.push(
+      goog.isDef(opt_scope) ? goog.bind(callback, opt_scope) : callback);
+};
+
+
+/**
+ * Deletes or nulls out any references to COM objects, DOM nodes, or other
+ * disposable objects. Classes that extend {@code goog.Disposable} should
+ * override this method.
+ * Not reentrant. To avoid calling it twice, it must only be called from the
+ * subclass' {@code disposeInternal} method. Everywhere else the public
+ * {@code dispose} method must be used.
+ * For example:
+ * <pre>
+ *   mypackage.MyClass = function() {
+ *     mypackage.MyClass.base(this, 'constructor');
+ *     // Constructor logic specific to MyClass.
+ *     ...
+ *   };
+ *   goog.inherits(mypackage.MyClass, goog.Disposable);
+ *
+ *   mypackage.MyClass.prototype.disposeInternal = function() {
+ *     // Dispose logic specific to MyClass.
+ *     ...
+ *     // Call superclass's disposeInternal at the end of the subclass's, like
+ *     // in C++, to avoid hard-to-catch issues.
+ *     mypackage.MyClass.base(this, 'disposeInternal');
+ *   };
+ * </pre>
+ * @protected
+ */
+goog.Disposable.prototype.disposeInternal = function() {
+  if (this.onDisposeCallbacks_) {
+    while (this.onDisposeCallbacks_.length) {
+      this.onDisposeCallbacks_.shift()();
+    }
+  }
+};
+
+
+/**
+ * Returns True if we can verify the object is disposed.
+ * Calls {@code isDisposed} on the argument if it supports it.  If obj
+ * is not an object with an isDisposed() method, return false.
+ * @param {*} obj The object to investigate.
+ * @return {boolean} True if we can verify the object is disposed.
+ */
+goog.Disposable.isDisposed = function(obj) {
+  if (obj && typeof obj.isDisposed == 'function') {
+    return obj.isDisposed();
+  }
+  return false;
+};
+
+
+/**
+ * Calls {@code dispose} on the argument if it supports it. If obj is not an
+ *     object with a dispose() method, this is a no-op.
+ * @param {*} obj The object to dispose of.
+ */
+goog.dispose = function(obj) {
+  if (obj && typeof obj.dispose == 'function') {
+    obj.dispose();
+  }
+};
+
+
+/**
+ * Calls {@code dispose} on each member of the list that supports it. (If the
+ * member is an ArrayLike, then {@code goog.disposeAll()} will be called
+ * recursively on each of its members.) If the member is not an object with a
+ * {@code dispose()} method, then it is ignored.
+ * @param {...*} var_args The list.
+ */
+goog.disposeAll = function(var_args) {
+  for (var i = 0, len = arguments.length; i < len; ++i) {
+    var disposable = arguments[i];
+    if (goog.isArrayLike(disposable)) {
+      goog.disposeAll.apply(null, disposable);
+    } else {
+      goog.dispose(disposable);
+    }
+  }
+};
+
+// Copyright 2013 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+goog.provide('goog.events.EventId');
+
+
+
+/**
+ * A templated class that is used when registering for events. Typical usage:
+ *
+ *    /** @type {goog.events.EventId<MyEventObj>} *\
+ *    var myEventId = new goog.events.EventId(
+ *        goog.events.getUniqueId(('someEvent'));
+ *
+ *    // No need to cast or declare here since the compiler knows the
+ *    // correct type of 'evt' (MyEventObj).
+ *    something.listen(myEventId, function(evt) {});
+ *
+ * @param {string} eventId
+ * @template T
+ * @constructor
+ * @struct
+ * @final
+ */
+goog.events.EventId = function(eventId) {
+  /** @const */ this.id = eventId;
+};
+
+
+/**
+ * @override
+ */
+goog.events.EventId.prototype.toString = function() {
+  return this.id;
+};
+
+// Copyright 2005 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview A base class for event objects.
+ *
+ */
+
+
+goog.provide('goog.events.Event');
+goog.provide('goog.events.EventLike');
+
+/**
+ * goog.events.Event no longer depends on goog.Disposable. Keep requiring
+ * goog.Disposable here to not break projects which assume this dependency.
+ * @suppress {extraRequire}
+ */
+goog.require('goog.Disposable');
+goog.require('goog.events.EventId');
+
+
+/**
+ * A typedef for event like objects that are dispatchable via the
+ * goog.events.dispatchEvent function. strings are treated as the type for a
+ * goog.events.Event. Objects are treated as an extension of a new
+ * goog.events.Event with the type property of the object being used as the type
+ * of the Event.
+ * @typedef {string|Object|goog.events.Event|goog.events.EventId}
+ */
+goog.events.EventLike;
+
+
+
+/**
+ * A base class for event objects, so that they can support preventDefault and
+ * stopPropagation.
+ *
+ * @suppress {underscore} Several properties on this class are technically
+ *     public, but referencing these properties outside this package is strongly
+ *     discouraged.
+ *
+ * @param {string|!goog.events.EventId} type Event Type.
+ * @param {Object=} opt_target Reference to the object that is the target of
+ *     this event. It has to implement the {@code EventTarget} interface
+ *     declared at {@link http://developer.mozilla.org/en/DOM/EventTarget}.
+ * @constructor
+ */
+goog.events.Event = function(type, opt_target) {
+  /**
+   * Event type.
+   * @type {string}
+   */
+  this.type = type instanceof goog.events.EventId ? String(type) : type;
+
+  /**
+   * TODO(tbreisacher): The type should probably be
+   * EventTarget|goog.events.EventTarget.
+   *
+   * Target of the event.
+   * @type {Object|undefined}
+   */
+  this.target = opt_target;
+
+  /**
+   * Object that had the listener attached.
+   * @type {Object|undefined}
+   */
+  this.currentTarget = this.target;
+
+  /**
+   * Whether to cancel the event in internal capture/bubble processing for IE.
+   * @type {boolean}
+   * @public
+   */
+  this.propagationStopped_ = false;
+
+  /**
+   * Whether the default action has been prevented.
+   * This is a property to match the W3C specification at
+   * {@link http://www.w3.org/TR/DOM-Level-3-Events/
+   * #events-event-type-defaultPrevented}.
+   * Must be treated as read-only outside the class.
+   * @type {boolean}
+   */
+  this.defaultPrevented = false;
+
+  /**
+   * Return value for in internal capture/bubble processing for IE.
+   * @type {boolean}
+   * @public
+   * @suppress {underscore|visibility} Technically public, but referencing this
+   *     outside this package is strongly discouraged.
+   */
+  this.returnValue_ = true;
+};
+
+
+/**
+ * Stops event propagation.
+ */
+goog.events.Event.prototype.stopPropagation = function() {
+  this.propagationStopped_ = true;
+};
+
+
+/**
+ * Prevents the default action, for example a link redirecting to a url.
+ */
+goog.events.Event.prototype.preventDefault = function() {
+  this.defaultPrevented = true;
+  this.returnValue_ = false;
+};
+
+
+/**
+ * Stops the propagation of the event. It is equivalent to
+ * {@code e.stopPropagation()}, but can be used as the callback argument of
+ * {@link goog.events.listen} without declaring another function.
+ * @param {!goog.events.Event} e An event.
+ */
+goog.events.Event.stopPropagation = function(e) {
+  e.stopPropagation();
+};
+
+
+/**
+ * Prevents the default action. It is equivalent to
+ * {@code e.preventDefault()}, but can be used as the callback argument of
+ * {@link goog.events.listen} without declaring another function.
+ * @param {!goog.events.Event} e An event.
+ */
+goog.events.Event.preventDefault = function(e) {
+  e.preventDefault();
+};
+
+// Copyright 2010 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Event Types.
+ *
+ * @author arv@google.com (Erik Arvidsson)
+ */
+
+
+goog.provide('goog.events.EventType');
+
+goog.require('goog.userAgent');
+
+
+/**
+ * Returns a prefixed event name for the current browser.
+ * @param {string} eventName The name of the event.
+ * @return {string} The prefixed event name.
+ * @suppress {missingRequire|missingProvide}
+ * @private
+ */
+goog.events.getVendorPrefixedName_ = function(eventName) {
+  return goog.userAgent.WEBKIT ?
+      'webkit' + eventName :
+      (goog.userAgent.OPERA ? 'o' + eventName.toLowerCase() :
+                              eventName.toLowerCase());
+};
+
+
+/**
+ * Constants for event names.
+ * @enum {string}
+ */
+goog.events.EventType = {
+  // Mouse events
+  CLICK: 'click',
+  RIGHTCLICK: 'rightclick',
+  DBLCLICK: 'dblclick',
+  MOUSEDOWN: 'mousedown',
+  MOUSEUP: 'mouseup',
+  MOUSEOVER: 'mouseover',
+  MOUSEOUT: 'mouseout',
+  MOUSEMOVE: 'mousemove',
+  MOUSEENTER: 'mouseenter',
+  MOUSELEAVE: 'mouseleave',
+  // Select start is non-standard.
+  // See http://msdn.microsoft.com/en-us/library/ie/ms536969(v=vs.85).aspx.
+  SELECTSTART: 'selectstart',  // IE, Safari, Chrome
+
+  // Wheel events
+  // http://www.w3.org/TR/DOM-Level-3-Events/#events-wheelevents
+  WHEEL: 'wheel',
+
+  // Key events
+  KEYPRESS: 'keypress',
+  KEYDOWN: 'keydown',
+  KEYUP: 'keyup',
+
+  // Focus
+  BLUR: 'blur',
+  FOCUS: 'focus',
+  DEACTIVATE: 'deactivate',  // IE only
+  // NOTE: The following two events are not stable in cross-browser usage.
+  //     WebKit and Opera implement DOMFocusIn/Out.
+  //     IE implements focusin/out.
+  //     Gecko implements neither see bug at
+  //     https://bugzilla.mozilla.org/show_bug.cgi?id=396927.
+  // The DOM Events Level 3 Draft deprecates DOMFocusIn in favor of focusin:
+  //     http://dev.w3.org/2006/webapi/DOM-Level-3-Events/html/DOM3-Events.html
+  // You can use FOCUS in Capture phase until implementations converge.
+  FOCUSIN: goog.userAgent.IE ? 'focusin' : 'DOMFocusIn',
+  FOCUSOUT: goog.userAgent.IE ? 'focusout' : 'DOMFocusOut',
+
+  // Forms
+  CHANGE: 'change',
+  RESET: 'reset',
+  SELECT: 'select',
+  SUBMIT: 'submit',
+  INPUT: 'input',
+  PROPERTYCHANGE: 'propertychange',  // IE only
+
+  // Drag and drop
+  DRAGSTART: 'dragstart',
+  DRAG: 'drag',
+  DRAGENTER: 'dragenter',
+  DRAGOVER: 'dragover',
+  DRAGLEAVE: 'dragleave',
+  DROP: 'drop',
+  DRAGEND: 'dragend',
+
+  // Touch events
+  // Note that other touch events exist, but we should follow the W3C list here.
+  // http://www.w3.org/TR/touch-events/#list-of-touchevent-types
+  TOUCHSTART: 'touchstart',
+  TOUCHMOVE: 'touchmove',
+  TOUCHEND: 'touchend',
+  TOUCHCANCEL: 'touchcancel',
+
+  // Misc
+  BEFOREUNLOAD: 'beforeunload',
+  CONSOLEMESSAGE: 'consolemessage',
+  CONTEXTMENU: 'contextmenu',
+  DOMCONTENTLOADED: 'DOMContentLoaded',
+  ERROR: 'error',
+  HELP: 'help',
+  LOAD: 'load',
+  LOSECAPTURE: 'losecapture',
+  ORIENTATIONCHANGE: 'orientationchange',
+  READYSTATECHANGE: 'readystatechange',
+  RESIZE: 'resize',
+  SCROLL: 'scroll',
+  UNLOAD: 'unload',
+
+  // Media events
+  CANPLAY: 'canplay',
+  CANPLAYTHROUGH: 'canplaythrough',
+  DURATIONCHANGE: 'durationchange',
+  EMPTIED: 'emptied',
+  ENDED: 'ended',
+  LOADEDDATA: 'loadeddata',
+  LOADEDMETADATA: 'loadedmetadata',
+  PAUSE: 'pause',
+  PLAY: 'play',
+  PLAYING: 'playing',
+  RATECHANGE: 'ratechange',
+  SEEKED: 'seeked',
+  SEEKING: 'seeking',
+  STALLED: 'stalled',
+  SUSPEND: 'suspend',
+  TIMEUPDATE: 'timeupdate',
+  VOLUMECHANGE: 'volumechange',
+  WAITING: 'waiting',
+
+  // HTML 5 History events
+  // See http://www.w3.org/TR/html5/browsers.html#event-definitions-0
+  HASHCHANGE: 'hashchange',
+  PAGEHIDE: 'pagehide',
+  PAGESHOW: 'pageshow',
+  POPSTATE: 'popstate',
+
+  // Copy and Paste
+  // Support is limited. Make sure it works on your favorite browser
+  // before using.
+  // http://www.quirksmode.org/dom/events/cutcopypaste.html
+  COPY: 'copy',
+  PASTE: 'paste',
+  CUT: 'cut',
+  BEFORECOPY: 'beforecopy',
+  BEFORECUT: 'beforecut',
+  BEFOREPASTE: 'beforepaste',
+
+  // HTML5 online/offline events.
+  // http://www.w3.org/TR/offline-webapps/#related
+  ONLINE: 'online',
+  OFFLINE: 'offline',
+
+  // HTML 5 worker events
+  MESSAGE: 'message',
+  CONNECT: 'connect',
+
+  // CSS animation events.
+  /** @suppress {missingRequire} */
+  ANIMATIONSTART: goog.events.getVendorPrefixedName_('AnimationStart'),
+  /** @suppress {missingRequire} */
+  ANIMATIONEND: goog.events.getVendorPrefixedName_('AnimationEnd'),
+  /** @suppress {missingRequire} */
+  ANIMATIONITERATION: goog.events.getVendorPrefixedName_('AnimationIteration'),
+
+  // CSS transition events. Based on the browser support described at:
+  // https://developer.mozilla.org/en/css/css_transitions#Browser_compatibility
+  /** @suppress {missingRequire} */
+  TRANSITIONEND: goog.events.getVendorPrefixedName_('TransitionEnd'),
+
+  // W3C Pointer Events
+  // http://www.w3.org/TR/pointerevents/
+  POINTERDOWN: 'pointerdown',
+  POINTERUP: 'pointerup',
+  POINTERCANCEL: 'pointercancel',
+  POINTERMOVE: 'pointermove',
+  POINTEROVER: 'pointerover',
+  POINTEROUT: 'pointerout',
+  POINTERENTER: 'pointerenter',
+  POINTERLEAVE: 'pointerleave',
+  GOTPOINTERCAPTURE: 'gotpointercapture',
+  LOSTPOINTERCAPTURE: 'lostpointercapture',
+
+  // IE specific events.
+  // See http://msdn.microsoft.com/en-us/library/ie/hh772103(v=vs.85).aspx
+  // Note: these events will be supplanted in IE11.
+  MSGESTURECHANGE: 'MSGestureChange',
+  MSGESTUREEND: 'MSGestureEnd',
+  MSGESTUREHOLD: 'MSGestureHold',
+  MSGESTURESTART: 'MSGestureStart',
+  MSGESTURETAP: 'MSGestureTap',
+  MSGOTPOINTERCAPTURE: 'MSGotPointerCapture',
+  MSINERTIASTART: 'MSInertiaStart',
+  MSLOSTPOINTERCAPTURE: 'MSLostPointerCapture',
+  MSPOINTERCANCEL: 'MSPointerCancel',
+  MSPOINTERDOWN: 'MSPointerDown',
+  MSPOINTERENTER: 'MSPointerEnter',
+  MSPOINTERHOVER: 'MSPointerHover',
+  MSPOINTERLEAVE: 'MSPointerLeave',
+  MSPOINTERMOVE: 'MSPointerMove',
+  MSPOINTEROUT: 'MSPointerOut',
+  MSPOINTEROVER: 'MSPointerOver',
+  MSPOINTERUP: 'MSPointerUp',
+
+  // Native IMEs/input tools events.
+  TEXT: 'text',
+  TEXTINPUT: 'textInput',
+  COMPOSITIONSTART: 'compositionstart',
+  COMPOSITIONUPDATE: 'compositionupdate',
+  COMPOSITIONEND: 'compositionend',
+
+  // Webview tag events
+  // See http://developer.chrome.com/dev/apps/webview_tag.html
+  EXIT: 'exit',
+  LOADABORT: 'loadabort',
+  LOADCOMMIT: 'loadcommit',
+  LOADREDIRECT: 'loadredirect',
+  LOADSTART: 'loadstart',
+  LOADSTOP: 'loadstop',
+  RESPONSIVE: 'responsive',
+  SIZECHANGED: 'sizechanged',
+  UNRESPONSIVE: 'unresponsive',
+
+  // HTML5 Page Visibility API.  See details at
+  // {@code goog.labs.dom.PageVisibilityMonitor}.
+  VISIBILITYCHANGE: 'visibilitychange',
+
+  // LocalStorage event.
+  STORAGE: 'storage',
+
+  // DOM Level 2 mutation events (deprecated).
+  DOMSUBTREEMODIFIED: 'DOMSubtreeModified',
+  DOMNODEINSERTED: 'DOMNodeInserted',
+  DOMNODEREMOVED: 'DOMNodeRemoved',
+  DOMNODEREMOVEDFROMDOCUMENT: 'DOMNodeRemovedFromDocument',
+  DOMNODEINSERTEDINTODOCUMENT: 'DOMNodeInsertedIntoDocument',
+  DOMATTRMODIFIED: 'DOMAttrModified',
+  DOMCHARACTERDATAMODIFIED: 'DOMCharacterDataModified',
+
+  // Print events.
+  BEFOREPRINT: 'beforeprint',
+  AFTERPRINT: 'afterprint'
+};
+
+// Copyright 2009 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Useful compiler idioms.
+ *
+ * @author johnlenz@google.com (John Lenz)
+ */
+
+goog.provide('goog.reflect');
+
+
+/**
+ * Syntax for object literal casts.
+ * @see http://go/jscompiler-renaming
+ * @see https://goo.gl/CRs09P
+ *
+ * Use this if you have an object literal whose keys need to have the same names
+ * as the properties of some class even after they are renamed by the compiler.
+ *
+ * @param {!Function} type Type to cast to.
+ * @param {Object} object Object literal to cast.
+ * @return {Object} The object literal.
+ */
+goog.reflect.object = function(type, object) {
+  return object;
+};
+
+/**
+ * Syntax for renaming property strings.
+ * @see http://go/jscompiler-renaming
+ * @see https://goo.gl/CRs09P
+ *
+ * Use this if you have an need to access a property as a string, but want
+ * to also have the property renamed by the compiler. In contrast to
+ * goog.reflect.object, this method takes an instance of an object.
+ *
+ * Properties must be simple names (not qualified names).
+ *
+ * @param {string} prop Name of the property
+ * @param {!Object} object Instance of the object whose type will be used
+ *     for renaming
+ * @return {string} The renamed property.
+ */
+goog.reflect.objectProperty = function(prop, object) {
+  return prop;
+};
+
+/**
+ * To assert to the compiler that an operation is needed when it would
+ * otherwise be stripped. For example:
+ * <code>
+ *     // Force a layout
+ *     goog.reflect.sinkValue(dialog.offsetHeight);
+ * </code>
+ * @param {T} x
+ * @return {T}
+ * @template T
+ */
+goog.reflect.sinkValue = function(x) {
+  goog.reflect.sinkValue[' '](x);
+  return x;
+};
+
+
+/**
+ * The compiler should optimize this function away iff no one ever uses
+ * goog.reflect.sinkValue.
+ */
+goog.reflect.sinkValue[' '] = goog.nullFunction;
+
+
+/**
+ * Check if a property can be accessed without throwing an exception.
+ * @param {Object} obj The owner of the property.
+ * @param {string} prop The property name.
+ * @return {boolean} Whether the property is accessible. Will also return true
+ *     if obj is null.
+ */
+goog.reflect.canAccessProperty = function(obj, prop) {
+  /** @preserveTry */
+  try {
+    goog.reflect.sinkValue(obj[prop]);
+    return true;
+  } catch (e) {
+  }
+  return false;
+};
+
+
+/**
+ * Retrieves a value from a cache given a key. The compiler provides special
+ * consideration for this call such that it is generally considered side-effect
+ * free. However, if the {@code opt_keyFn} or {@code valueFn} have side-effects
+ * then the entire call is considered to have side-effects.
+ *
+ * Conventionally storing the value on the cache would be considered a
+ * side-effect and preclude unused calls from being pruned, ie. even if
+ * the value was never used, it would still always be stored in the cache.
+ *
+ * Providing a side-effect free {@code valueFn} and {@code opt_keyFn}
+ * allows unused calls to {@code goog.cache} to be pruned.
+ *
+ * @param {!Object<K, V>} cacheObj The object that contains the cached values.
+ * @param {?} key The key to lookup in the cache. If it is not string or number
+ *     then a {@code opt_keyFn} should be provided. The key is also used as the
+ *     parameter to the {@code valueFn}.
+ * @param {!function(?):V} valueFn The value provider to use to calculate the
+ *     value to store in the cache. This function should be side-effect free
+ *     to take advantage of the optimization.
+ * @param {function(?):K=} opt_keyFn The key provider to determine the cache
+ *     map key. This should be used if the given key is not a string or number.
+ *     If not provided then the given key is used. This function should be
+ *     side-effect free to take advantage of the optimization.
+ * @return {V} The cached or calculated value.
+ * @template K
+ * @template V
+ */
+goog.reflect.cache = function(cacheObj, key, valueFn, opt_keyFn) {
+  var storedKey = opt_keyFn ? opt_keyFn(key) : key;
+
+  if (Object.prototype.hasOwnProperty.call(cacheObj, storedKey)) {
+    return cacheObj[storedKey];
+  }
+
+  return (cacheObj[storedKey] = valueFn(key));
+};
+
+// Copyright 2005 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview A patched, standardized event object for browser events.
+ *
+ * <pre>
+ * The patched event object contains the following members:
+ * - type           {string}    Event type, e.g. 'click'
+ * - target         {Object}    The element that actually triggered the event
+ * - currentTarget  {Object}    The element the listener is attached to
+ * - relatedTarget  {Object}    For mouseover and mouseout, the previous object
+ * - offsetX        {number}    X-coordinate relative to target
+ * - offsetY        {number}    Y-coordinate relative to target
+ * - clientX        {number}    X-coordinate relative to viewport
+ * - clientY        {number}    Y-coordinate relative to viewport
+ * - screenX        {number}    X-coordinate relative to the edge of the screen
+ * - screenY        {number}    Y-coordinate relative to the edge of the screen
+ * - button         {number}    Mouse button. Use isButton() to test.
+ * - keyCode        {number}    Key-code
+ * - ctrlKey        {boolean}   Was ctrl key depressed
+ * - altKey         {boolean}   Was alt key depressed
+ * - shiftKey       {boolean}   Was shift key depressed
+ * - metaKey        {boolean}   Was meta key depressed
+ * - defaultPrevented {boolean} Whether the default action has been prevented
+ * - state          {Object}    History state object
+ *
+ * NOTE: The keyCode member contains the raw browser keyCode. For normalized
+ * key and character code use {@link goog.events.KeyHandler}.
+ * </pre>
+ *
+ * @author arv@google.com (Erik Arvidsson)
+ */
+
+goog.provide('goog.events.BrowserEvent');
+goog.provide('goog.events.BrowserEvent.MouseButton');
+
+goog.require('goog.events.BrowserFeature');
+goog.require('goog.events.Event');
+goog.require('goog.events.EventType');
+goog.require('goog.reflect');
+goog.require('goog.userAgent');
+
+
+
+/**
+ * Accepts a browser event object and creates a patched, cross browser event
+ * object.
+ * The content of this object will not be initialized if no event object is
+ * provided. If this is the case, init() needs to be invoked separately.
+ * @param {Event=} opt_e Browser event object.
+ * @param {EventTarget=} opt_currentTarget Current target for event.
+ * @constructor
+ * @extends {goog.events.Event}
+ */
+goog.events.BrowserEvent = function(opt_e, opt_currentTarget) {
+  goog.events.BrowserEvent.base(this, 'constructor', opt_e ? opt_e.type : '');
+
+  /**
+   * Target that fired the event.
+   * @override
+   * @type {Node}
+   */
+  this.target = null;
+
+  /**
+   * Node that had the listener attached.
+   * @override
+   * @type {Node|undefined}
+   */
+  this.currentTarget = null;
+
+  /**
+   * For mouseover and mouseout events, the related object for the event.
+   * @type {Node}
+   */
+  this.relatedTarget = null;
+
+  /**
+   * X-coordinate relative to target.
+   * @type {number}
+   */
+  this.offsetX = 0;
+
+  /**
+   * Y-coordinate relative to target.
+   * @type {number}
+   */
+  this.offsetY = 0;
+
+  /**
+   * X-coordinate relative to the window.
+   * @type {number}
+   */
+  this.clientX = 0;
+
+  /**
+   * Y-coordinate relative to the window.
+   * @type {number}
+   */
+  this.clientY = 0;
+
+  /**
+   * X-coordinate relative to the monitor.
+   * @type {number}
+   */
+  this.screenX = 0;
+
+  /**
+   * Y-coordinate relative to the monitor.
+   * @type {number}
+   */
+  this.screenY = 0;
+
+  /**
+   * Which mouse button was pressed.
+   * @type {number}
+   */
+  this.button = 0;
+
+  /**
+   * Keycode of key press.
+   * @type {number}
+   */
+  this.keyCode = 0;
+
+  /**
+   * Keycode of key press.
+   * @type {number}
+   */
+  this.charCode = 0;
+
+  /**
+   * Whether control was pressed at time of event.
+   * @type {boolean}
+   */
+  this.ctrlKey = false;
+
+  /**
+   * Whether alt was pressed at time of event.
+   * @type {boolean}
+   */
+  this.altKey = false;
+
+  /**
+   * Whether shift was pressed at time of event.
+   * @type {boolean}
+   */
+  this.shiftKey = false;
+
+  /**
+   * Whether the meta key was pressed at time of event.
+   * @type {boolean}
+   */
+  this.metaKey = false;
+
+  /**
+   * History state object, only set for PopState events where it's a copy of the
+   * state object provided to pushState or replaceState.
+   * @type {Object}
+   */
+  this.state = null;
+
+  /**
+   * Whether the default platform modifier key was pressed at time of event.
+   * (This is control for all platforms except Mac, where it's Meta.)
+   * @type {boolean}
+   */
+  this.platformModifierKey = false;
+
+  /**
+   * The browser event object.
+   * @private {Event}
+   */
+  this.event_ = null;
+
+  if (opt_e) {
+    this.init(opt_e, opt_currentTarget);
+  }
+};
+goog.inherits(goog.events.BrowserEvent, goog.events.Event);
+
+
+/**
+ * Normalized button constants for the mouse.
+ * @enum {number}
+ */
+goog.events.BrowserEvent.MouseButton = {
+  LEFT: 0,
+  MIDDLE: 1,
+  RIGHT: 2
+};
+
+
+/**
+ * Static data for mapping mouse buttons.
+ * @type {!Array<number>}
+ */
+goog.events.BrowserEvent.IEButtonMap = [
+  1,  // LEFT
+  4,  // MIDDLE
+  2   // RIGHT
+];
+
+
+/**
+ * Accepts a browser event object and creates a patched, cross browser event
+ * object.
+ * @param {Event} e Browser event object.
+ * @param {EventTarget=} opt_currentTarget Current target for event.
+ */
+goog.events.BrowserEvent.prototype.init = function(e, opt_currentTarget) {
+  var type = this.type = e.type;
+
+  /**
+   * On touch devices use the first "changed touch" as the relevant touch.
+   * @type {Touch}
+   */
+  var relevantTouch = e.changedTouches ? e.changedTouches[0] : null;
+
+  // TODO(nicksantos): Change this.target to type EventTarget.
+  this.target = /** @type {Node} */ (e.target) || e.srcElement;
+
+  // TODO(nicksantos): Change this.currentTarget to type EventTarget.
+  this.currentTarget = /** @type {Node} */ (opt_currentTarget);
+
+  var relatedTarget = /** @type {Node} */ (e.relatedTarget);
+  if (relatedTarget) {
+    // There's a bug in FireFox where sometimes, relatedTarget will be a
+    // chrome element, and accessing any property of it will get a permission
+    // denied exception. See:
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=497780
+    if (goog.userAgent.GECKO) {
+      if (!goog.reflect.canAccessProperty(relatedTarget, 'nodeName')) {
+        relatedTarget = null;
+      }
+    }
+    // TODO(arv): Use goog.events.EventType when it has been refactored into its
+    // own file.
+  } else if (type == goog.events.EventType.MOUSEOVER) {
+    relatedTarget = e.fromElement;
+  } else if (type == goog.events.EventType.MOUSEOUT) {
+    relatedTarget = e.toElement;
+  }
+
+  this.relatedTarget = relatedTarget;
+
+  if (!goog.isNull(relevantTouch)) {
+    this.clientX = relevantTouch.clientX !== undefined ? relevantTouch.clientX :
+                                                         relevantTouch.pageX;
+    this.clientY = relevantTouch.clientY !== undefined ? relevantTouch.clientY :
+                                                         relevantTouch.pageY;
+    this.screenX = relevantTouch.screenX || 0;
+    this.screenY = relevantTouch.screenY || 0;
+  } else {
+    // Webkit emits a lame warning whenever layerX/layerY is accessed.
+    // http://code.google.com/p/chromium/issues/detail?id=101733
+    this.offsetX = (goog.userAgent.WEBKIT || e.offsetX !== undefined) ?
+        e.offsetX :
+        e.layerX;
+    this.offsetY = (goog.userAgent.WEBKIT || e.offsetY !== undefined) ?
+        e.offsetY :
+        e.layerY;
+    this.clientX = e.clientX !== undefined ? e.clientX : e.pageX;
+    this.clientY = e.clientY !== undefined ? e.clientY : e.pageY;
+    this.screenX = e.screenX || 0;
+    this.screenY = e.screenY || 0;
+  }
+
+  this.button = e.button;
+
+  this.keyCode = e.keyCode || 0;
+  this.charCode = e.charCode || (type == 'keypress' ? e.keyCode : 0);
+  this.ctrlKey = e.ctrlKey;
+  this.altKey = e.altKey;
+  this.shiftKey = e.shiftKey;
+  this.metaKey = e.metaKey;
+  this.platformModifierKey = goog.userAgent.MAC ? e.metaKey : e.ctrlKey;
+  this.state = e.state;
+  this.event_ = e;
+  if (e.defaultPrevented) {
+    this.preventDefault();
+  }
+};
+
+
+/**
+ * Tests to see which button was pressed during the event. This is really only
+ * useful in IE and Gecko browsers. And in IE, it's only useful for
+ * mousedown/mouseup events, because click only fires for the left mouse button.
+ *
+ * Safari 2 only reports the left button being clicked, and uses the value '1'
+ * instead of 0. Opera only reports a mousedown event for the middle button, and
+ * no mouse events for the right button. Opera has default behavior for left and
+ * middle click that can only be overridden via a configuration setting.
+ *
+ * There's a nice table of this mess at http://www.unixpapa.com/js/mouse.html.
+ *
+ * @param {goog.events.BrowserEvent.MouseButton} button The button
+ *     to test for.
+ * @return {boolean} True if button was pressed.
+ */
+goog.events.BrowserEvent.prototype.isButton = function(button) {
+  if (!goog.events.BrowserFeature.HAS_W3C_BUTTON) {
+    if (this.type == 'click') {
+      return button == goog.events.BrowserEvent.MouseButton.LEFT;
+    } else {
+      return !!(
+          this.event_.button & goog.events.BrowserEvent.IEButtonMap[button]);
+    }
+  } else {
+    return this.event_.button == button;
+  }
+};
+
+
+/**
+ * Whether this has an "action"-producing mouse button.
+ *
+ * By definition, this includes left-click on windows/linux, and left-click
+ * without the ctrl key on Macs.
+ *
+ * @return {boolean} The result.
+ */
+goog.events.BrowserEvent.prototype.isMouseActionButton = function() {
+  // Webkit does not ctrl+click to be a right-click, so we
+  // normalize it to behave like Gecko and Opera.
+  return this.isButton(goog.events.BrowserEvent.MouseButton.LEFT) &&
+      !(goog.userAgent.WEBKIT && goog.userAgent.MAC && this.ctrlKey);
+};
+
+
+/**
+ * @override
+ */
+goog.events.BrowserEvent.prototype.stopPropagation = function() {
+  goog.events.BrowserEvent.superClass_.stopPropagation.call(this);
+  if (this.event_.stopPropagation) {
+    this.event_.stopPropagation();
+  } else {
+    this.event_.cancelBubble = true;
+  }
+};
+
+
+/**
+ * @override
+ */
+goog.events.BrowserEvent.prototype.preventDefault = function() {
+  goog.events.BrowserEvent.superClass_.preventDefault.call(this);
+  var be = this.event_;
+  if (!be.preventDefault) {
+    be.returnValue = false;
+    if (goog.events.BrowserFeature.SET_KEY_CODE_TO_PREVENT_DEFAULT) {
+      /** @preserveTry */
+      try {
+        // Most keys can be prevented using returnValue. Some special keys
+        // require setting the keyCode to -1 as well:
+        //
+        // In IE7:
+        // F3, F5, F10, F11, Ctrl+P, Crtl+O, Ctrl+F (these are taken from IE6)
+        //
+        // In IE8:
+        // Ctrl+P, Crtl+O, Ctrl+F (F1-F12 cannot be stopped through the event)
+        //
+        // We therefore do this for all function keys as well as when Ctrl key
+        // is pressed.
+        var VK_F1 = 112;
+        var VK_F12 = 123;
+        if (be.ctrlKey || be.keyCode >= VK_F1 && be.keyCode <= VK_F12) {
+          be.keyCode = -1;
+        }
+      } catch (ex) {
+        // IE throws an 'access denied' exception when trying to change
+        // keyCode in some situations (e.g. srcElement is input[type=file],
+        // or srcElement is an anchor tag rewritten by parent's innerHTML).
+        // Do nothing in this case.
+      }
+    }
+  } else {
+    be.preventDefault();
+  }
+};
+
+
+/**
+ * @return {Event} The underlying browser event object.
+ */
+goog.events.BrowserEvent.prototype.getBrowserEvent = function() {
+  return this.event_;
+};
+
+// Copyright 2012 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview An interface for a listenable JavaScript object.
+ * @author chrishenry@google.com (Chris Henry)
+ */
+
+goog.provide('goog.events.Listenable');
+goog.provide('goog.events.ListenableKey');
+
+/** @suppress {extraRequire} */
+goog.require('goog.events.EventId');
+
+goog.forwardDeclare('goog.events.EventLike');
+goog.forwardDeclare('goog.events.EventTarget');
+
+
+
+/**
+ * A listenable interface. A listenable is an object with the ability
+ * to dispatch/broadcast events to "event listeners" registered via
+ * listen/listenOnce.
+ *
+ * The interface allows for an event propagation mechanism similar
+ * to one offered by native browser event targets, such as
+ * capture/bubble mechanism, stopping propagation, and preventing
+ * default actions. Capture/bubble mechanism depends on the ancestor
+ * tree constructed via {@code #getParentEventTarget}; this tree
+ * must be directed acyclic graph. The meaning of default action(s)
+ * in preventDefault is specific to a particular use case.
+ *
+ * Implementations that do not support capture/bubble or can not have
+ * a parent listenable can simply not implement any ability to set the
+ * parent listenable (and have {@code #getParentEventTarget} return
+ * null).
+ *
+ * Implementation of this class can be used with or independently from
+ * goog.events.
+ *
+ * Implementation must call {@code #addImplementation(implClass)}.
+ *
+ * @interface
+ * @see goog.events
+ * @see http://www.w3.org/TR/DOM-Level-2-Events/events.html
+ */
+goog.events.Listenable = function() {};
+
+
+/**
+ * An expando property to indicate that an object implements
+ * goog.events.Listenable.
+ *
+ * See addImplementation/isImplementedBy.
+ *
+ * @type {string}
+ * @const
+ */
+goog.events.Listenable.IMPLEMENTED_BY_PROP =
+    'closure_listenable_' + ((Math.random() * 1e6) | 0);
+
+
+/**
+ * Marks a given class (constructor) as an implementation of
+ * Listenable, do that we can query that fact at runtime. The class
+ * must have already implemented the interface.
+ * @param {!Function} cls The class constructor. The corresponding
+ *     class must have already implemented the interface.
+ */
+goog.events.Listenable.addImplementation = function(cls) {
+  cls.prototype[goog.events.Listenable.IMPLEMENTED_BY_PROP] = true;
+};
+
+
+/**
+ * @param {Object} obj The object to check.
+ * @return {boolean} Whether a given instance implements Listenable. The
+ *     class/superclass of the instance must call addImplementation.
+ */
+goog.events.Listenable.isImplementedBy = function(obj) {
+  return !!(obj && obj[goog.events.Listenable.IMPLEMENTED_BY_PROP]);
+};
+
+
+/**
+ * Adds an event listener. A listener can only be added once to an
+ * object and if it is added again the key for the listener is
+ * returned. Note that if the existing listener is a one-off listener
+ * (registered via listenOnce), it will no longer be a one-off
+ * listener after a call to listen().
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
+ * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
+ *     method.
+ * @param {boolean=} opt_useCapture Whether to fire in capture phase
+ *     (defaults to false).
+ * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {!goog.events.ListenableKey} Unique key for the listener.
+ * @template SCOPE,EVENTOBJ
+ */
+goog.events.Listenable.prototype.listen;
+
+
+/**
+ * Adds an event listener that is removed automatically after the
+ * listener fired once.
+ *
+ * If an existing listener already exists, listenOnce will do
+ * nothing. In particular, if the listener was previously registered
+ * via listen(), listenOnce() will not turn the listener into a
+ * one-off listener. Similarly, if there is already an existing
+ * one-off listener, listenOnce does not modify the listeners (it is
+ * still a once listener).
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
+ * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
+ *     method.
+ * @param {boolean=} opt_useCapture Whether to fire in capture phase
+ *     (defaults to false).
+ * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {!goog.events.ListenableKey} Unique key for the listener.
+ * @template SCOPE,EVENTOBJ
+ */
+goog.events.Listenable.prototype.listenOnce;
+
+
+/**
+ * Removes an event listener which was added with listen() or listenOnce().
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
+ * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
+ *     method.
+ * @param {boolean=} opt_useCapture Whether to fire in capture phase
+ *     (defaults to false).
+ * @param {SCOPE=} opt_listenerScope Object in whose scope to call
+ *     the listener.
+ * @return {boolean} Whether any listener was removed.
+ * @template SCOPE,EVENTOBJ
+ */
+goog.events.Listenable.prototype.unlisten;
+
+
+/**
+ * Removes an event listener which was added with listen() by the key
+ * returned by listen().
+ *
+ * @param {!goog.events.ListenableKey} key The key returned by
+ *     listen() or listenOnce().
+ * @return {boolean} Whether any listener was removed.
+ */
+goog.events.Listenable.prototype.unlistenByKey;
+
+
+/**
+ * Dispatches an event (or event like object) and calls all listeners
+ * listening for events of this type. The type of the event is decided by the
+ * type property on the event object.
+ *
+ * If any of the listeners returns false OR calls preventDefault then this
+ * function will return false.  If one of the capture listeners calls
+ * stopPropagation, then the bubble listeners won't fire.
+ *
+ * @param {goog.events.EventLike} e Event object.
+ * @return {boolean} If anyone called preventDefault on the event object (or
+ *     if any of the listeners returns false) this will also return false.
+ */
+goog.events.Listenable.prototype.dispatchEvent;
+
+
+/**
+ * Removes all listeners from this listenable. If type is specified,
+ * it will only remove listeners of the particular type. otherwise all
+ * registered listeners will be removed.
+ *
+ * @param {string=} opt_type Type of event to remove, default is to
+ *     remove all types.
+ * @return {number} Number of listeners removed.
+ */
+goog.events.Listenable.prototype.removeAllListeners;
+
+
+/**
+ * Returns the parent of this event target to use for capture/bubble
+ * mechanism.
+ *
+ * NOTE(chrishenry): The name reflects the original implementation of
+ * custom event target ({@code goog.events.EventTarget}). We decided
+ * that changing the name is not worth it.
+ *
+ * @return {goog.events.Listenable} The parent EventTarget or null if
+ *     there is no parent.
+ */
+goog.events.Listenable.prototype.getParentEventTarget;
+
+
+/**
+ * Fires all registered listeners in this listenable for the given
+ * type and capture mode, passing them the given eventObject. This
+ * does not perform actual capture/bubble. Only implementors of the
+ * interface should be using this.
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>} type The type of the
+ *     listeners to fire.
+ * @param {boolean} capture The capture mode of the listeners to fire.
+ * @param {EVENTOBJ} eventObject The event object to fire.
+ * @return {boolean} Whether all listeners succeeded without
+ *     attempting to prevent default behavior. If any listener returns
+ *     false or called goog.events.Event#preventDefault, this returns
+ *     false.
+ * @template EVENTOBJ
+ */
+goog.events.Listenable.prototype.fireListeners;
+
+
+/**
+ * Gets all listeners in this listenable for the given type and
+ * capture mode.
+ *
+ * @param {string|!goog.events.EventId} type The type of the listeners to fire.
+ * @param {boolean} capture The capture mode of the listeners to fire.
+ * @return {!Array<!goog.events.ListenableKey>} An array of registered
+ *     listeners.
+ * @template EVENTOBJ
+ */
+goog.events.Listenable.prototype.getListeners;
+
+
+/**
+ * Gets the goog.events.ListenableKey for the event or null if no such
+ * listener is in use.
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>} type The name of the event
+ *     without the 'on' prefix.
+ * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener The
+ *     listener function to get.
+ * @param {boolean} capture Whether the listener is a capturing listener.
+ * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {goog.events.ListenableKey} the found listener or null if not found.
+ * @template SCOPE,EVENTOBJ
+ */
+goog.events.Listenable.prototype.getListener;
+
+
+/**
+ * Whether there is any active listeners matching the specified
+ * signature. If either the type or capture parameters are
+ * unspecified, the function will match on the remaining criteria.
+ *
+ * @param {string|!goog.events.EventId<EVENTOBJ>=} opt_type Event type.
+ * @param {boolean=} opt_capture Whether to check for capture or bubble
+ *     listeners.
+ * @return {boolean} Whether there is any active listeners matching
+ *     the requested type and/or capture phase.
+ * @template EVENTOBJ
+ */
+goog.events.Listenable.prototype.hasListener;
+
+
+
+/**
+ * An interface that describes a single registered listener.
+ * @interface
+ */
+goog.events.ListenableKey = function() {};
+
+
+/**
+ * Counter used to create a unique key
+ * @type {number}
+ * @private
+ */
+goog.events.ListenableKey.counter_ = 0;
+
+
+/**
+ * Reserves a key to be used for ListenableKey#key field.
+ * @return {number} A number to be used to fill ListenableKey#key
+ *     field.
+ */
+goog.events.ListenableKey.reserveKey = function() {
+  return ++goog.events.ListenableKey.counter_;
+};
+
+
+/**
+ * The source event target.
+ * @type {Object|goog.events.Listenable|goog.events.EventTarget}
+ */
+goog.events.ListenableKey.prototype.src;
+
+
+/**
+ * The event type the listener is listening to.
+ * @type {string}
+ */
+goog.events.ListenableKey.prototype.type;
+
+
+/**
+ * The listener function.
+ * @type {function(?):?|{handleEvent:function(?):?}|null}
+ */
+goog.events.ListenableKey.prototype.listener;
+
+
+/**
+ * Whether the listener works on capture phase.
+ * @type {boolean}
+ */
+goog.events.ListenableKey.prototype.capture;
+
+
+/**
+ * The 'this' object for the listener function's scope.
+ * @type {Object|undefined}
+ */
+goog.events.ListenableKey.prototype.handler;
+
+
+/**
+ * A globally unique number to identify the key.
+ * @type {number}
+ */
+goog.events.ListenableKey.prototype.key;
+
+// Copyright 2005 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Listener object.
+ * @see ../demos/events.html
+ */
+
+goog.provide('goog.events.Listener');
+
+goog.require('goog.events.ListenableKey');
+
+
+
+/**
+ * Simple class that stores information about a listener
+ * @param {!Function} listener Callback function.
+ * @param {Function} proxy Wrapper for the listener that patches the event.
+ * @param {EventTarget|goog.events.Listenable} src Source object for
+ *     the event.
+ * @param {string} type Event type.
+ * @param {boolean} capture Whether in capture or bubble phase.
+ * @param {Object=} opt_handler Object in whose context to execute the callback.
+ * @implements {goog.events.ListenableKey}
+ * @constructor
+ */
+goog.events.Listener = function(
+    listener, proxy, src, type, capture, opt_handler) {
+  if (goog.events.Listener.ENABLE_MONITORING) {
+    this.creationStack = new Error().stack;
+  }
+
+  /**
+   * Callback function.
+   * @type {Function}
+   */
+  this.listener = listener;
+
+  /**
+   * A wrapper over the original listener. This is used solely to
+   * handle native browser events (it is used to simulate the capture
+   * phase and to patch the event object).
+   * @type {Function}
+   */
+  this.proxy = proxy;
+
+  /**
+   * Object or node that callback is listening to
+   * @type {EventTarget|goog.events.Listenable}
+   */
+  this.src = src;
+
+  /**
+   * The event type.
+   * @const {string}
+   */
+  this.type = type;
+
+  /**
+   * Whether the listener is being called in the capture or bubble phase
+   * @const {boolean}
+   */
+  this.capture = !!capture;
+
+  /**
+   * Optional object whose context to execute the listener in
+   * @type {Object|undefined}
+   */
+  this.handler = opt_handler;
+
+  /**
+   * The key of the listener.
+   * @const {number}
+   * @override
+   */
+  this.key = goog.events.ListenableKey.reserveKey();
+
+  /**
+   * Whether to remove the listener after it has been called.
+   * @type {boolean}
+   */
+  this.callOnce = false;
+
+  /**
+   * Whether the listener has been removed.
+   * @type {boolean}
+   */
+  this.removed = false;
+};
+
+
+/**
+ * @define {boolean} Whether to enable the monitoring of the
+ *     goog.events.Listener instances. Switching on the monitoring is only
+ *     recommended for debugging because it has a significant impact on
+ *     performance and memory usage. If switched off, the monitoring code
+ *     compiles down to 0 bytes.
+ */
+goog.define('goog.events.Listener.ENABLE_MONITORING', false);
+
+
+/**
+ * If monitoring the goog.events.Listener instances is enabled, stores the
+ * creation stack trace of the Disposable instance.
+ * @type {string}
+ */
+goog.events.Listener.prototype.creationStack;
+
+
+/**
+ * Marks this listener as removed. This also remove references held by
+ * this listener object (such as listener and event source).
+ */
+goog.events.Listener.prototype.markAsRemoved = function() {
+  this.removed = true;
+  this.listener = null;
+  this.proxy = null;
+  this.src = null;
+  this.handler = null;
+};
+
+// Copyright 2013 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview A map of listeners that provides utility functions to
+ * deal with listeners on an event target. Used by
+ * {@code goog.events.EventTarget}.
+ *
+ * WARNING: Do not use this class from outside goog.events package.
+ *
+ * @visibility {//closure/goog/bin/sizetests:__pkg__}
+ * @visibility {//closure/goog/events:__pkg__}
+ * @visibility {//closure/goog/labs/events:__pkg__}
+ */
+
+goog.provide('goog.events.ListenerMap');
+
+goog.require('goog.array');
+goog.require('goog.events.Listener');
+goog.require('goog.object');
+
+
+
+/**
+ * Creates a new listener map.
+ * @param {EventTarget|goog.events.Listenable} src The src object.
+ * @constructor
+ * @final
+ */
+goog.events.ListenerMap = function(src) {
+  /** @type {EventTarget|goog.events.Listenable} */
+  this.src = src;
+
+  /**
+   * Maps of event type to an array of listeners.
+   * @type {!Object<string, !Array<!goog.events.Listener>>}
+   */
+  this.listeners = {};
+
+  /**
+   * The count of types in this map that have registered listeners.
+   * @private {number}
+   */
+  this.typeCount_ = 0;
+};
+
+
+/**
+ * @return {number} The count of event types in this map that actually
+ *     have registered listeners.
+ */
+goog.events.ListenerMap.prototype.getTypeCount = function() {
+  return this.typeCount_;
+};
+
+
+/**
+ * @return {number} Total number of registered listeners.
+ */
+goog.events.ListenerMap.prototype.getListenerCount = function() {
+  var count = 0;
+  for (var type in this.listeners) {
+    count += this.listeners[type].length;
+  }
+  return count;
+};
+
+
+/**
+ * Adds an event listener. A listener can only be added once to an
+ * object and if it is added again the key for the listener is
+ * returned.
+ *
+ * Note that a one-off listener will not change an existing listener,
+ * if any. On the other hand a normal listener will change existing
+ * one-off listener to become a normal listener.
+ *
+ * @param {string|!goog.events.EventId} type The listener event type.
+ * @param {!Function} listener This listener callback method.
+ * @param {boolean} callOnce Whether the listener is a one-off
+ *     listener.
+ * @param {boolean=} opt_useCapture The capture mode of the listener.
+ * @param {Object=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {!goog.events.ListenableKey} Unique key for the listener.
+ */
+goog.events.ListenerMap.prototype.add = function(
+    type, listener, callOnce, opt_useCapture, opt_listenerScope) {
+  var typeStr = type.toString();
+  var listenerArray = this.listeners[typeStr];
+  if (!listenerArray) {
+    listenerArray = this.listeners[typeStr] = [];
+    this.typeCount_++;
+  }
+
+  var listenerObj;
+  var index = goog.events.ListenerMap.findListenerIndex_(
+      listenerArray, listener, opt_useCapture, opt_listenerScope);
+  if (index > -1) {
+    listenerObj = listenerArray[index];
+    if (!callOnce) {
+      // Ensure that, if there is an existing callOnce listener, it is no
+      // longer a callOnce listener.
+      listenerObj.callOnce = false;
+    }
+  } else {
+    listenerObj = new goog.events.Listener(
+        listener, null, this.src, typeStr, !!opt_useCapture, opt_listenerScope);
+    listenerObj.callOnce = callOnce;
+    listenerArray.push(listenerObj);
+  }
+  return listenerObj;
+};
+
+
+/**
+ * Removes a matching listener.
+ * @param {string|!goog.events.EventId} type The listener event type.
+ * @param {!Function} listener This listener callback method.
+ * @param {boolean=} opt_useCapture The capture mode of the listener.
+ * @param {Object=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {boolean} Whether any listener was removed.
+ */
+goog.events.ListenerMap.prototype.remove = function(
+    type, listener, opt_useCapture, opt_listenerScope) {
+  var typeStr = type.toString();
+  if (!(typeStr in this.listeners)) {
+    return false;
+  }
+
+  var listenerArray = this.listeners[typeStr];
+  var index = goog.events.ListenerMap.findListenerIndex_(
+      listenerArray, listener, opt_useCapture, opt_listenerScope);
+  if (index > -1) {
+    var listenerObj = listenerArray[index];
+    listenerObj.markAsRemoved();
+    goog.array.removeAt(listenerArray, index);
+    if (listenerArray.length == 0) {
+      delete this.listeners[typeStr];
+      this.typeCount_--;
+    }
+    return true;
+  }
+  return false;
+};
+
+
+/**
+ * Removes the given listener object.
+ * @param {!goog.events.ListenableKey} listener The listener to remove.
+ * @return {boolean} Whether the listener is removed.
+ */
+goog.events.ListenerMap.prototype.removeByKey = function(listener) {
+  var type = listener.type;
+  if (!(type in this.listeners)) {
+    return false;
+  }
+
+  var removed = goog.array.remove(this.listeners[type], listener);
+  if (removed) {
+    listener.markAsRemoved();
+    if (this.listeners[type].length == 0) {
+      delete this.listeners[type];
+      this.typeCount_--;
+    }
+  }
+  return removed;
+};
+
+
+/**
+ * Removes all listeners from this map. If opt_type is provided, only
+ * listeners that match the given type are removed.
+ * @param {string|!goog.events.EventId=} opt_type Type of event to remove.
+ * @return {number} Number of listeners removed.
+ */
+goog.events.ListenerMap.prototype.removeAll = function(opt_type) {
+  var typeStr = opt_type && opt_type.toString();
+  var count = 0;
+  for (var type in this.listeners) {
+    if (!typeStr || type == typeStr) {
+      var listenerArray = this.listeners[type];
+      for (var i = 0; i < listenerArray.length; i++) {
+        ++count;
+        listenerArray[i].markAsRemoved();
+      }
+      delete this.listeners[type];
+      this.typeCount_--;
+    }
+  }
+  return count;
+};
+
+
+/**
+ * Gets all listeners that match the given type and capture mode. The
+ * returned array is a copy (but the listener objects are not).
+ * @param {string|!goog.events.EventId} type The type of the listeners
+ *     to retrieve.
+ * @param {boolean} capture The capture mode of the listeners to retrieve.
+ * @return {!Array<!goog.events.ListenableKey>} An array of matching
+ *     listeners.
+ */
+goog.events.ListenerMap.prototype.getListeners = function(type, capture) {
+  var listenerArray = this.listeners[type.toString()];
+  var rv = [];
+  if (listenerArray) {
+    for (var i = 0; i < listenerArray.length; ++i) {
+      var listenerObj = listenerArray[i];
+      if (listenerObj.capture == capture) {
+        rv.push(listenerObj);
+      }
+    }
+  }
+  return rv;
+};
+
+
+/**
+ * Gets the goog.events.ListenableKey for the event or null if no such
+ * listener is in use.
+ *
+ * @param {string|!goog.events.EventId} type The type of the listener
+ *     to retrieve.
+ * @param {!Function} listener The listener function to get.
+ * @param {boolean} capture Whether the listener is a capturing listener.
+ * @param {Object=} opt_listenerScope Object in whose scope to call the
+ *     listener.
+ * @return {goog.events.ListenableKey} the found listener or null if not found.
+ */
+goog.events.ListenerMap.prototype.getListener = function(
+    type, listener, capture, opt_listenerScope) {
+  var listenerArray = this.listeners[type.toString()];
+  var i = -1;
+  if (listenerArray) {
+    i = goog.events.ListenerMap.findListenerIndex_(
+        listenerArray, listener, capture, opt_listenerScope);
+  }
+  return i > -1 ? listenerArray[i] : null;
+};
+
+
+/**
+ * Whether there is a matching listener. If either the type or capture
+ * parameters are unspecified, the function will match on the
+ * remaining criteria.
+ *
+ * @param {string|!goog.events.EventId=} opt_type The type of the listener.
+ * @param {boolean=} opt_capture The capture mode of the listener.
+ * @return {boolean} Whether there is an active listener matching
+ *     the requested type and/or capture phase.
+ */
+goog.events.ListenerMap.prototype.hasListener = function(
+    opt_type, opt_capture) {
+  var hasType = goog.isDef(opt_type);
+  var typeStr = hasType ? opt_type.toString() : '';
+  var hasCapture = goog.isDef(opt_capture);
+
+  return goog.object.some(this.listeners, function(listenerArray, type) {
+    for (var i = 0; i < listenerArray.length; ++i) {
+      if ((!hasType || listenerArray[i].type == typeStr) &&
+          (!hasCapture || listenerArray[i].capture == opt_capture)) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+};
+
+
+/**
+ * Finds the index of a matching goog.events.Listener in the given
+ * listenerArray.
+ * @param {!Array<!goog.events.Listener>} listenerArray Array of listener.
+ * @param {!Function} listener The listener function.
+ * @param {boolean=} opt_useCapture The capture flag for the listener.
+ * @param {Object=} opt_listenerScope The listener scope.
+ * @return {number} The index of the matching listener within the
+ *     listenerArray.
+ * @private
+ */
+goog.events.ListenerMap.findListenerIndex_ = function(
+    listenerArray, listener, opt_useCapture, opt_listenerScope) {
+  for (var i = 0; i < listenerArray.length; ++i) {
+    var listenerObj = listenerArray[i];
+    if (!listenerObj.removed && listenerObj.listener == listener &&
+        listenerObj.capture == !!opt_useCapture &&
+        listenerObj.handler == opt_listenerScope) {
+      return i;
+    }
+  }
+  return -1;
+};
+
+// Copyright 2005 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview An event manager for both native browser event
+ * targets and custom JavaScript event targets
+ * ({@code goog.events.Listenable}). This provides an abstraction
+ * over browsers' event systems.
+ *
+ * It also provides a simulation of W3C event model's capture phase in
+ * Internet Explorer (IE 8 and below). Caveat: the simulation does not
+ * interact well with listeners registered directly on the elements
+ * (bypassing goog.events) or even with listeners registered via
+ * goog.events in a separate JS binary. In these cases, we provide
+ * no ordering guarantees.
+ *
+ * The listeners will receive a "patched" event object. Such event object
+ * contains normalized values for certain event properties that differs in
+ * different browsers.
+ *
+ * Example usage:
+ * <pre>
+ * goog.events.listen(myNode, 'click', function(e) { alert('woo') });
+ * goog.events.listen(myNode, 'mouseover', mouseHandler, true);
+ * goog.events.unlisten(myNode, 'mouseover', mouseHandler, true);
+ * goog.events.removeAll(myNode);
+ * </pre>
+ *
+ *                                            in IE and event object patching]
+ * @author arv@google.com (Erik Arvidsson)
+ *
+ * @see ../demos/events.html
+ * @see ../demos/event-propagation.html
+ * @see ../demos/stopevent.html
+ */
+
+// IMPLEMENTATION NOTES:
+// goog.events stores an auxiliary data structure on each EventTarget
+// source being listened on. This allows us to take advantage of GC,
+// having the data structure GC'd when the EventTarget is GC'd. This
+// GC behavior is equivalent to using W3C DOM Events directly.
+
+goog.provide('goog.events');
+goog.provide('goog.events.CaptureSimulationMode');
+goog.provide('goog.events.Key');
+goog.provide('goog.events.ListenableType');
+
+goog.require('goog.asserts');
+goog.require('goog.debug.entryPointRegistry');
+goog.require('goog.events.BrowserEvent');
+goog.require('goog.events.BrowserFeature');
+goog.require('goog.events.Listenable');
+goog.require('goog.events.ListenerMap');
+
+goog.forwardDeclare('goog.debug.ErrorHandler');
+goog.forwardDeclare('goog.events.EventWrapper');
+
+
+/**
+ * @typedef {number|goog.events.ListenableKey}
+ */
+goog.events.Key;
+
+
+/**
+ * @typedef {EventTarget|goog.events.Listenable}
+ */
+goog.events.ListenableType;
+
+
+/**
+ * Property name on a native event target for the listener map
+ * associated with the event target.
+ * @private @const {string}
+ */
+goog.events.LISTENER_MAP_PROP_ = 'closure_lm_' + ((Math.random() * 1e6) | 0);
+
+
+/**
+ * String used to prepend to IE event types.
+ * @const
+ * @private
+ */
+goog.events.onString_ = 'on';
+
+
+/**
+ * Map of computed "on<eventname>" strings for IE event types. Caching
+ * this removes an extra object allocation in goog.events.listen which
+ * improves IE6 performance.
+ * @const
+ * @dict
+ * @private
+ */
+goog.events.onStringMap_ = {};
+
+
+/**
+ * @enum {number} Different capture simulation mode for IE8-.
+ */
+goog.events.CaptureSimulationMode = {
+  /**
+   * Does not perform capture simulation. Will asserts in IE8- when you
+   * add capture listeners.
+   */
+  OFF_AND_FAIL: 0,
+
+  /**
+   * Does not perform capture simulation, silently ignore capture
+   * listeners.
+   */
+  OFF_AND_SILENT: 1,
+
+  /**
+   * Performs capture simulation.
+   */
+  ON: 2
+};
+
+
+/**
+ * @define {number} The capture simulation mode for IE8-. By default,
+ *     this is ON.
+ */
+goog.define('goog.events.CAPTURE_SIMULATION_MODE', 2);
+
+
+/**
+ * Estimated count of total native listeners.
+ * @private {number}
+ */
+goog.events.listenerCountEstimate_ = 0;
+
+
+/**
+ * Adds an event listener for a specific event on a native event
+ * target (such as a DOM element) or an object that has implemented
+ * {@link goog.events.Listenable}. A listener can only be added once
+ * to an object and if it is added again the key for the listener is
+ * returned. Note that if the existing listener is a one-off listener
+ * (registered via listenOnce), it will no longer be a one-off
+ * listener after a call to listen().
+ *
+ * @param {EventTarget|goog.events.Listenable} src The node to listen
+ *     to events on.
+ * @param {string|Array<string>|
+ *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
+ *     type Event type or array of event types.
+ * @param {function(this:T, EVENTOBJ):?|{handleEvent:function(?):?}|null}
+ *     listener Callback method, or an object with a handleEvent function.
+ *     WARNING: passing an Object is now softly deprecated.
+ * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
+ *     false).
+ * @param {T=} opt_handler Element in whose scope to call the listener.
+ * @return {goog.events.Key} Unique key for the listener.
+ * @template T,EVENTOBJ
+ */
+goog.events.listen = function(src, type, listener, opt_capt, opt_handler) {
+  if (goog.isArray(type)) {
+    for (var i = 0; i < type.length; i++) {
+      goog.events.listen(src, type[i], listener, opt_capt, opt_handler);
+    }
+    return null;
+  }
+
+  listener = goog.events.wrapListener(listener);
+  if (goog.events.Listenable.isImplementedBy(src)) {
+    return src.listen(
+        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
+        opt_handler);
+  } else {
+    return goog.events.listen_(
+        /** @type {!EventTarget} */ (src),
+        /** @type {string|!goog.events.EventId} */ (type), listener,
+        /* callOnce */ false, opt_capt, opt_handler);
+  }
+};
+
+
+/**
+ * Adds an event listener for a specific event on a native event
+ * target. A listener can only be added once to an object and if it
+ * is added again the key for the listener is returned.
+ *
+ * Note that a one-off listener will not change an existing listener,
+ * if any. On the other hand a normal listener will change existing
+ * one-off listener to become a normal listener.
+ *
+ * @param {EventTarget} src The node to listen to events on.
+ * @param {string|!goog.events.EventId} type Event type.
+ * @param {!Function} listener Callback function.
+ * @param {boolean} callOnce Whether the listener is a one-off
+ *     listener or otherwise.
+ * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
+ *     false).
+ * @param {Object=} opt_handler Element in whose scope to call the listener.
+ * @return {goog.events.ListenableKey} Unique key for the listener.
+ * @private
+ */
+goog.events.listen_ = function(
+    src, type, listener, callOnce, opt_capt, opt_handler) {
+  if (!type) {
+    throw Error('Invalid event type');
+  }
+
+  var capture = !!opt_capt;
+  if (capture && !goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT) {
+    if (goog.events.CAPTURE_SIMULATION_MODE ==
+        goog.events.CaptureSimulationMode.OFF_AND_FAIL) {
+      goog.asserts.fail('Can not register capture listener in IE8-.');
+      return null;
+    } else if (
+        goog.events.CAPTURE_SIMULATION_MODE ==
+        goog.events.CaptureSimulationMode.OFF_AND_SILENT) {
+      return null;
+    }
+  }
+
+  var listenerMap = goog.events.getListenerMap_(src);
+  if (!listenerMap) {
+    src[goog.events.LISTENER_MAP_PROP_] = listenerMap =
+        new goog.events.ListenerMap(src);
+  }
+
+  var listenerObj =
+      listenerMap.add(type, listener, callOnce, opt_capt, opt_handler);
+
+  // If the listenerObj already has a proxy, it has been set up
+  // previously. We simply return.
+  if (listenerObj.proxy) {
+    return listenerObj;
+  }
+
+  var proxy = goog.events.getProxy();
+  listenerObj.proxy = proxy;
+
+  proxy.src = src;
+  proxy.listener = listenerObj;
+
+  // Attach the proxy through the browser's API
+  if (src.addEventListener) {
+    src.addEventListener(type.toString(), proxy, capture);
+  } else if (src.attachEvent) {
+    // The else if above used to be an unconditional else. It would call
+    // exception on IE11, spoiling the day of some callers. The previous
+    // incarnation of this code, from 2007, indicates that it replaced an
+    // earlier still version that caused excess allocations on IE6.
+    src.attachEvent(goog.events.getOnString_(type.toString()), proxy);
+  } else {
+    throw Error('addEventListener and attachEvent are unavailable.');
+  }
+
+  goog.events.listenerCountEstimate_++;
+  return listenerObj;
+};
+
+
+/**
+ * Helper function for returning a proxy function.
+ * @return {!Function} A new or reused function object.
+ */
+goog.events.getProxy = function() {
+  var proxyCallbackFunction = goog.events.handleBrowserEvent_;
+  // Use a local var f to prevent one allocation.
+  var f =
+      goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT ? function(eventObject) {
+        return proxyCallbackFunction.call(f.src, f.listener, eventObject);
+      } : function(eventObject) {
+        var v = proxyCallbackFunction.call(f.src, f.listener, eventObject);
+        // NOTE(chrishenry): In IE, we hack in a capture phase. However, if
+        // there is inline event handler which tries to prevent default (for
+        // example <a href="..." onclick="return false">...</a>) in a
+        // descendant element, the prevent default will be overridden
+        // by this listener if this listener were to return true. Hence, we
+        // return undefined.
+        if (!v) return v;
+      };
+  return f;
+};
+
+
+/**
+ * Adds an event listener for a specific event on a native event
+ * target (such as a DOM element) or an object that has implemented
+ * {@link goog.events.Listenable}. After the event has fired the event
+ * listener is removed from the target.
+ *
+ * If an existing listener already exists, listenOnce will do
+ * nothing. In particular, if the listener was previously registered
+ * via listen(), listenOnce() will not turn the listener into a
+ * one-off listener. Similarly, if there is already an existing
+ * one-off listener, listenOnce does not modify the listeners (it is
+ * still a once listener).
+ *
+ * @param {EventTarget|goog.events.Listenable} src The node to listen
+ *     to events on.
+ * @param {string|Array<string>|
+ *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
+ *     type Event type or array of event types.
+ * @param {function(this:T, EVENTOBJ):?|{handleEvent:function(?):?}|null}
+ *     listener Callback method.
+ * @param {boolean=} opt_capt Fire in capture phase?.
+ * @param {T=} opt_handler Element in whose scope to call the listener.
+ * @return {goog.events.Key} Unique key for the listener.
+ * @template T,EVENTOBJ
+ */
+goog.events.listenOnce = function(src, type, listener, opt_capt, opt_handler) {
+  if (goog.isArray(type)) {
+    for (var i = 0; i < type.length; i++) {
+      goog.events.listenOnce(src, type[i], listener, opt_capt, opt_handler);
+    }
+    return null;
+  }
+
+  listener = goog.events.wrapListener(listener);
+  if (goog.events.Listenable.isImplementedBy(src)) {
+    return src.listenOnce(
+        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
+        opt_handler);
+  } else {
+    return goog.events.listen_(
+        /** @type {!EventTarget} */ (src),
+        /** @type {string|!goog.events.EventId} */ (type), listener,
+        /* callOnce */ true, opt_capt, opt_handler);
+  }
+};
+
+
+/**
+ * Adds an event listener with a specific event wrapper on a DOM Node or an
+ * object that has implemented {@link goog.events.Listenable}. A listener can
+ * only be added once to an object.
+ *
+ * @param {EventTarget|goog.events.Listenable} src The target to
+ *     listen to events on.
+ * @param {goog.events.EventWrapper} wrapper Event wrapper to use.
+ * @param {function(this:T, ?):?|{handleEvent:function(?):?}|null} listener
+ *     Callback method, or an object with a handleEvent function.
+ * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
+ *     false).
+ * @param {T=} opt_handler Element in whose scope to call the listener.
+ * @template T
+ */
+goog.events.listenWithWrapper = function(
+    src, wrapper, listener, opt_capt, opt_handler) {
+  wrapper.listen(src, listener, opt_capt, opt_handler);
+};
+
+
+/**
+ * Removes an event listener which was added with listen().
+ *
+ * @param {EventTarget|goog.events.Listenable} src The target to stop
+ *     listening to events on.
+ * @param {string|Array<string>|
+ *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
+ *     type Event type or array of event types to unlisten to.
+ * @param {function(?):?|{handleEvent:function(?):?}|null} listener The
+ *     listener function to remove.
+ * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
+ *     whether the listener is fired during the capture or bubble phase of the
+ *     event.
+ * @param {Object=} opt_handler Element in whose scope to call the listener.
+ * @return {?boolean} indicating whether the listener was there to remove.
+ * @template EVENTOBJ
+ */
+goog.events.unlisten = function(src, type, listener, opt_capt, opt_handler) {
+  if (goog.isArray(type)) {
+    for (var i = 0; i < type.length; i++) {
+      goog.events.unlisten(src, type[i], listener, opt_capt, opt_handler);
+    }
+    return null;
+  }
+
+  listener = goog.events.wrapListener(listener);
+  if (goog.events.Listenable.isImplementedBy(src)) {
+    return src.unlisten(
+        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
+        opt_handler);
+  }
+
+  if (!src) {
+    // TODO(chrishenry): We should tighten the API to only accept
+    // non-null objects, or add an assertion here.
+    return false;
+  }
+
+  var capture = !!opt_capt;
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {!EventTarget} */ (src));
+  if (listenerMap) {
+    var listenerObj = listenerMap.getListener(
+        /** @type {string|!goog.events.EventId} */ (type), listener, capture,
+        opt_handler);
+    if (listenerObj) {
+      return goog.events.unlistenByKey(listenerObj);
+    }
+  }
+
+  return false;
+};
+
+
+/**
+ * Removes an event listener which was added with listen() by the key
+ * returned by listen().
+ *
+ * @param {goog.events.Key} key The key returned by listen() for this
+ *     event listener.
+ * @return {boolean} indicating whether the listener was there to remove.
+ */
+goog.events.unlistenByKey = function(key) {
+  // TODO(chrishenry): Remove this check when tests that rely on this
+  // are fixed.
+  if (goog.isNumber(key)) {
+    return false;
+  }
+
+  var listener = key;
+  if (!listener || listener.removed) {
+    return false;
+  }
+
+  var src = listener.src;
+  if (goog.events.Listenable.isImplementedBy(src)) {
+    return /** @type {!goog.events.Listenable} */ (src).unlistenByKey(listener);
+  }
+
+  var type = listener.type;
+  var proxy = listener.proxy;
+  if (src.removeEventListener) {
+    src.removeEventListener(type, proxy, listener.capture);
+  } else if (src.detachEvent) {
+    src.detachEvent(goog.events.getOnString_(type), proxy);
+  }
+  goog.events.listenerCountEstimate_--;
+
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {!EventTarget} */ (src));
+  // TODO(chrishenry): Try to remove this conditional and execute the
+  // first branch always. This should be safe.
+  if (listenerMap) {
+    listenerMap.removeByKey(listener);
+    if (listenerMap.getTypeCount() == 0) {
+      // Null the src, just because this is simple to do (and useful
+      // for IE <= 7).
+      listenerMap.src = null;
+      // We don't use delete here because IE does not allow delete
+      // on a window object.
+      src[goog.events.LISTENER_MAP_PROP_] = null;
+    }
+  } else {
+    listener.markAsRemoved();
+  }
+
+  return true;
+};
+
+
+/**
+ * Removes an event listener which was added with listenWithWrapper().
+ *
+ * @param {EventTarget|goog.events.Listenable} src The target to stop
+ *     listening to events on.
+ * @param {goog.events.EventWrapper} wrapper Event wrapper to use.
+ * @param {function(?):?|{handleEvent:function(?):?}|null} listener The
+ *     listener function to remove.
+ * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
+ *     whether the listener is fired during the capture or bubble phase of the
+ *     event.
+ * @param {Object=} opt_handler Element in whose scope to call the listener.
+ */
+goog.events.unlistenWithWrapper = function(
+    src, wrapper, listener, opt_capt, opt_handler) {
+  wrapper.unlisten(src, listener, opt_capt, opt_handler);
+};
+
+
+/**
+ * Removes all listeners from an object. You can also optionally
+ * remove listeners of a particular type.
+ *
+ * @param {Object|undefined} obj Object to remove listeners from. Must be an
+ *     EventTarget or a goog.events.Listenable.
+ * @param {string|!goog.events.EventId=} opt_type Type of event to remove.
+ *     Default is all types.
+ * @return {number} Number of listeners removed.
+ */
+goog.events.removeAll = function(obj, opt_type) {
+  // TODO(chrishenry): Change the type of obj to
+  // (!EventTarget|!goog.events.Listenable).
+
+  if (!obj) {
+    return 0;
+  }
+
+  if (goog.events.Listenable.isImplementedBy(obj)) {
+    return /** @type {?} */ (obj).removeAllListeners(opt_type);
+  }
+
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {!EventTarget} */ (obj));
+  if (!listenerMap) {
+    return 0;
+  }
+
+  var count = 0;
+  var typeStr = opt_type && opt_type.toString();
+  for (var type in listenerMap.listeners) {
+    if (!typeStr || type == typeStr) {
+      // Clone so that we don't need to worry about unlistenByKey
+      // changing the content of the ListenerMap.
+      var listeners = listenerMap.listeners[type].concat();
+      for (var i = 0; i < listeners.length; ++i) {
+        if (goog.events.unlistenByKey(listeners[i])) {
+          ++count;
+        }
+      }
+    }
+  }
+  return count;
+};
+
+
+/**
+ * Gets the listeners for a given object, type and capture phase.
+ *
+ * @param {Object} obj Object to get listeners for.
+ * @param {string|!goog.events.EventId} type Event type.
+ * @param {boolean} capture Capture phase?.
+ * @return {Array<!goog.events.Listener>} Array of listener objects.
+ */
+goog.events.getListeners = function(obj, type, capture) {
+  if (goog.events.Listenable.isImplementedBy(obj)) {
+    return /** @type {!goog.events.Listenable} */ (obj).getListeners(
+        type, capture);
+  } else {
+    if (!obj) {
+      // TODO(chrishenry): We should tighten the API to accept
+      // !EventTarget|goog.events.Listenable, and add an assertion here.
+      return [];
+    }
+
+    var listenerMap = goog.events.getListenerMap_(
+        /** @type {!EventTarget} */ (obj));
+    return listenerMap ? listenerMap.getListeners(type, capture) : [];
+  }
+};
+
+
+/**
+ * Gets the goog.events.Listener for the event or null if no such listener is
+ * in use.
+ *
+ * @param {EventTarget|goog.events.Listenable} src The target from
+ *     which to get listeners.
+ * @param {?string|!goog.events.EventId<EVENTOBJ>} type The type of the event.
+ * @param {function(EVENTOBJ):?|{handleEvent:function(?):?}|null} listener The
+ *     listener function to get.
+ * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
+ *                            whether the listener is fired during the
+ *                            capture or bubble phase of the event.
+ * @param {Object=} opt_handler Element in whose scope to call the listener.
+ * @return {goog.events.ListenableKey} the found listener or null if not found.
+ * @template EVENTOBJ
+ */
+goog.events.getListener = function(src, type, listener, opt_capt, opt_handler) {
+  // TODO(chrishenry): Change type from ?string to string, or add assertion.
+  type = /** @type {string} */ (type);
+  listener = goog.events.wrapListener(listener);
+  var capture = !!opt_capt;
+  if (goog.events.Listenable.isImplementedBy(src)) {
+    return src.getListener(type, listener, capture, opt_handler);
+  }
+
+  if (!src) {
+    // TODO(chrishenry): We should tighten the API to only accept
+    // non-null objects, or add an assertion here.
+    return null;
+  }
+
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {!EventTarget} */ (src));
+  if (listenerMap) {
+    return listenerMap.getListener(type, listener, capture, opt_handler);
+  }
+  return null;
+};
+
+
+/**
+ * Returns whether an event target has any active listeners matching the
+ * specified signature. If either the type or capture parameters are
+ * unspecified, the function will match on the remaining criteria.
+ *
+ * @param {EventTarget|goog.events.Listenable} obj Target to get
+ *     listeners for.
+ * @param {string|!goog.events.EventId=} opt_type Event type.
+ * @param {boolean=} opt_capture Whether to check for capture or bubble-phase
+ *     listeners.
+ * @return {boolean} Whether an event target has one or more listeners matching
+ *     the requested type and/or capture phase.
+ */
+goog.events.hasListener = function(obj, opt_type, opt_capture) {
+  if (goog.events.Listenable.isImplementedBy(obj)) {
+    return obj.hasListener(opt_type, opt_capture);
+  }
+
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {!EventTarget} */ (obj));
+  return !!listenerMap && listenerMap.hasListener(opt_type, opt_capture);
+};
+
+
+/**
+ * Provides a nice string showing the normalized event objects public members
+ * @param {Object} e Event Object.
+ * @return {string} String of the public members of the normalized event object.
+ */
+goog.events.expose = function(e) {
+  var str = [];
+  for (var key in e) {
+    if (e[key] && e[key].id) {
+      str.push(key + ' = ' + e[key] + ' (' + e[key].id + ')');
+    } else {
+      str.push(key + ' = ' + e[key]);
+    }
+  }
+  return str.join('\n');
+};
+
+
+/**
+ * Returns a string with on prepended to the specified type. This is used for IE
+ * which expects "on" to be prepended. This function caches the string in order
+ * to avoid extra allocations in steady state.
+ * @param {string} type Event type.
+ * @return {string} The type string with 'on' prepended.
+ * @private
+ */
+goog.events.getOnString_ = function(type) {
+  if (type in goog.events.onStringMap_) {
+    return goog.events.onStringMap_[type];
+  }
+  return goog.events.onStringMap_[type] = goog.events.onString_ + type;
+};
+
+
+/**
+ * Fires an object's listeners of a particular type and phase
+ *
+ * @param {Object} obj Object whose listeners to call.
+ * @param {string|!goog.events.EventId} type Event type.
+ * @param {boolean} capture Which event phase.
+ * @param {Object} eventObject Event object to be passed to listener.
+ * @return {boolean} True if all listeners returned true else false.
+ */
+goog.events.fireListeners = function(obj, type, capture, eventObject) {
+  if (goog.events.Listenable.isImplementedBy(obj)) {
+    return /** @type {!goog.events.Listenable} */ (obj).fireListeners(
+        type, capture, eventObject);
+  }
+
+  return goog.events.fireListeners_(obj, type, capture, eventObject);
+};
+
+
+/**
+ * Fires an object's listeners of a particular type and phase.
+ * @param {Object} obj Object whose listeners to call.
+ * @param {string|!goog.events.EventId} type Event type.
+ * @param {boolean} capture Which event phase.
+ * @param {Object} eventObject Event object to be passed to listener.
+ * @return {boolean} True if all listeners returned true else false.
+ * @private
+ */
+goog.events.fireListeners_ = function(obj, type, capture, eventObject) {
+  /** @type {boolean} */
+  var retval = true;
+
+  var listenerMap = goog.events.getListenerMap_(
+      /** @type {EventTarget} */ (obj));
+  if (listenerMap) {
+    // TODO(chrishenry): Original code avoids array creation when there
+    // is no listener, so we do the same. If this optimization turns
+    // out to be not required, we can replace this with
+    // listenerMap.getListeners(type, capture) instead, which is simpler.
+    var listenerArray = listenerMap.listeners[type.toString()];
+    if (listenerArray) {
+      listenerArray = listenerArray.concat();
+      for (var i = 0; i < listenerArray.length; i++) {
+        var listener = listenerArray[i];
+        // We might not have a listener if the listener was removed.
+        if (listener && listener.capture == capture && !listener.removed) {
+          var result = goog.events.fireListener(listener, eventObject);
+          retval = retval && (result !== false);
+        }
+      }
+    }
+  }
+  return retval;
+};
+
+
+/**
+ * Fires a listener with a set of arguments
+ *
+ * @param {goog.events.Listener} listener The listener object to call.
+ * @param {Object} eventObject The event object to pass to the listener.
+ * @return {boolean} Result of listener.
+ */
+goog.events.fireListener = function(listener, eventObject) {
+  var listenerFn = listener.listener;
+  var listenerHandler = listener.handler || listener.src;
+
+  if (listener.callOnce) {
+    goog.events.unlistenByKey(listener);
+  }
+  return listenerFn.call(listenerHandler, eventObject);
+};
+
+
+/**
+ * Gets the total number of listeners currently in the system.
+ * @return {number} Number of listeners.
+ * @deprecated This returns estimated count, now that Closure no longer
+ * stores a central listener registry. We still return an estimation
+ * to keep existing listener-related tests passing. In the near future,
+ * this function will be removed.
+ */
+goog.events.getTotalListenerCount = function() {
+  return goog.events.listenerCountEstimate_;
+};
+
+
+/**
+ * Dispatches an event (or event like object) and calls all listeners
+ * listening for events of this type. The type of the event is decided by the
+ * type property on the event object.
+ *
+ * If any of the listeners returns false OR calls preventDefault then this
+ * function will return false.  If one of the capture listeners calls
+ * stopPropagation, then the bubble listeners won't fire.
+ *
+ * @param {goog.events.Listenable} src The event target.
+ * @param {goog.events.EventLike} e Event object.
+ * @return {boolean} If anyone called preventDefault on the event object (or
+ *     if any of the handlers returns false) this will also return false.
+ *     If there are no handlers, or if all handlers return true, this returns
+ *     true.
+ */
+goog.events.dispatchEvent = function(src, e) {
+  goog.asserts.assert(
+      goog.events.Listenable.isImplementedBy(src),
+      'Can not use goog.events.dispatchEvent with ' +
+          'non-goog.events.Listenable instance.');
+  return src.dispatchEvent(e);
+};
+
+
+/**
+ * Installs exception protection for the browser event entry point using the
+ * given error handler.
+ *
+ * @param {goog.debug.ErrorHandler} errorHandler Error handler with which to
+ *     protect the entry point.
+ */
+goog.events.protectBrowserEventEntryPoint = function(errorHandler) {
+  goog.events.handleBrowserEvent_ =
+      errorHandler.protectEntryPoint(goog.events.handleBrowserEvent_);
+};
+
+
+/**
+ * Handles an event and dispatches it to the correct listeners. This
+ * function is a proxy for the real listener the user specified.
+ *
+ * @param {goog.events.Listener} listener The listener object.
+ * @param {Event=} opt_evt Optional event object that gets passed in via the
+ *     native event handlers.
+ * @return {boolean} Result of the event handler.
+ * @this {EventTarget} The object or Element that fired the event.
+ * @private
+ */
+goog.events.handleBrowserEvent_ = function(listener, opt_evt) {
+  if (listener.removed) {
+    return true;
+  }
+
+  // Synthesize event propagation if the browser does not support W3C
+  // event model.
+  if (!goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT) {
+    var ieEvent = opt_evt ||
+        /** @type {Event} */ (goog.getObjectByName('window.event'));
+    var evt = new goog.events.BrowserEvent(ieEvent, this);
+    /** @type {boolean} */
+    var retval = true;
+
+    if (goog.events.CAPTURE_SIMULATION_MODE ==
+        goog.events.CaptureSimulationMode.ON) {
+      // If we have not marked this event yet, we should perform capture
+      // simulation.
+      if (!goog.events.isMarkedIeEvent_(ieEvent)) {
+        goog.events.markIeEvent_(ieEvent);
+
+        var ancestors = [];
+        for (var parent = evt.currentTarget; parent;
+             parent = parent.parentNode) {
+          ancestors.push(parent);
+        }
+
+        // Fire capture listeners.
+        var type = listener.type;
+        for (var i = ancestors.length - 1; !evt.propagationStopped_ && i >= 0;
+             i--) {
+          evt.currentTarget = ancestors[i];
+          var result =
+              goog.events.fireListeners_(ancestors[i], type, true, evt);
+          retval = retval && result;
+        }
+
+        // Fire bubble listeners.
+        //
+        // We can technically rely on IE to perform bubble event
+        // propagation. However, it turns out that IE fires events in
+        // opposite order of attachEvent registration, which broke
+        // some code and tests that rely on the order. (While W3C DOM
+        // Level 2 Events TR leaves the event ordering unspecified,
+        // modern browsers and W3C DOM Level 3 Events Working Draft
+        // actually specify the order as the registration order.)
+        for (var i = 0; !evt.propagationStopped_ && i < ancestors.length; i++) {
+          evt.currentTarget = ancestors[i];
+          var result =
+              goog.events.fireListeners_(ancestors[i], type, false, evt);
+          retval = retval && result;
+        }
+      }
+    } else {
+      retval = goog.events.fireListener(listener, evt);
+    }
+    return retval;
+  }
+
+  // Otherwise, simply fire the listener.
+  return goog.events.fireListener(
+      listener, new goog.events.BrowserEvent(opt_evt, this));
+};
+
+
+/**
+ * This is used to mark the IE event object so we do not do the Closure pass
+ * twice for a bubbling event.
+ * @param {Event} e The IE browser event.
+ * @private
+ */
+goog.events.markIeEvent_ = function(e) {
+  // Only the keyCode and the returnValue can be changed. We use keyCode for
+  // non keyboard events.
+  // event.returnValue is a bit more tricky. It is undefined by default. A
+  // boolean false prevents the default action. In a window.onbeforeunload and
+  // the returnValue is non undefined it will be alerted. However, we will only
+  // modify the returnValue for keyboard events. We can get a problem if non
+  // closure events sets the keyCode or the returnValue
+
+  var useReturnValue = false;
+
+  if (e.keyCode == 0) {
+    // We cannot change the keyCode in case that srcElement is input[type=file].
+    // We could test that that is the case but that would allocate 3 objects.
+    // If we use try/catch we will only allocate extra objects in the case of a
+    // failure.
+    /** @preserveTry */
+    try {
+      e.keyCode = -1;
+      return;
+    } catch (ex) {
+      useReturnValue = true;
+    }
+  }
+
+  if (useReturnValue ||
+      /** @type {boolean|undefined} */ (e.returnValue) == undefined) {
+    e.returnValue = true;
+  }
+};
+
+
+/**
+ * This is used to check if an IE event has already been handled by the Closure
+ * system so we do not do the Closure pass twice for a bubbling event.
+ * @param {Event} e  The IE browser event.
+ * @return {boolean} True if the event object has been marked.
+ * @private
+ */
+goog.events.isMarkedIeEvent_ = function(e) {
+  return e.keyCode < 0 || e.returnValue != undefined;
+};
+
+
+/**
+ * Counter to create unique event ids.
+ * @private {number}
+ */
+goog.events.uniqueIdCounter_ = 0;
+
+
+/**
+ * Creates a unique event id.
+ *
+ * @param {string} identifier The identifier.
+ * @return {string} A unique identifier.
+ * @idGenerator {unique}
+ */
+goog.events.getUniqueId = function(identifier) {
+  return identifier + '_' + goog.events.uniqueIdCounter_++;
+};
+
+
+/**
+ * @param {EventTarget} src The source object.
+ * @return {goog.events.ListenerMap} A listener map for the given
+ *     source object, or null if none exists.
+ * @private
+ */
+goog.events.getListenerMap_ = function(src) {
+  var listenerMap = src[goog.events.LISTENER_MAP_PROP_];
+  // IE serializes the property as well (e.g. when serializing outer
+  // HTML). So we must check that the value is of the correct type.
+  return listenerMap instanceof goog.events.ListenerMap ? listenerMap : null;
+};
+
+
+/**
+ * Expando property for listener function wrapper for Object with
+ * handleEvent.
+ * @private @const {string}
+ */
+goog.events.LISTENER_WRAPPER_PROP_ =
+    '__closure_events_fn_' + ((Math.random() * 1e9) >>> 0);
+
+
+/**
+ * @param {Object|Function} listener The listener function or an
+ *     object that contains handleEvent method.
+ * @return {!Function} Either the original function or a function that
+ *     calls obj.handleEvent. If the same listener is passed to this
+ *     function more than once, the same function is guaranteed to be
+ *     returned.
+ */
+goog.events.wrapListener = function(listener) {
+  goog.asserts.assert(listener, 'Listener can not be null.');
+
+  if (goog.isFunction(listener)) {
+    return listener;
+  }
+
+  goog.asserts.assert(
+      listener.handleEvent, 'An object listener must have handleEvent method.');
+  if (!listener[goog.events.LISTENER_WRAPPER_PROP_]) {
+    listener[goog.events.LISTENER_WRAPPER_PROP_] = function(e) {
+      return /** @type {?} */ (listener).handleEvent(e);
+    };
+  }
+  return listener[goog.events.LISTENER_WRAPPER_PROP_];
+};
+
+
+// Register the browser event handler as an entry point, so that
+// it can be monitored for exception handling, etc.
+goog.debug.entryPointRegistry.register(
+    /**
+     * @param {function(!Function): !Function} transformer The transforming
+     *     function.
+     */
+    function(transformer) {
+      goog.events.handleBrowserEvent_ =
+          transformer(goog.events.handleBrowserEvent_);
+    });
+
+goog.provide('ngeo.EventHelper');
+
+goog.require('ngeo');
+goog.require('goog.events');
+
+
+/**
+ * Provides methods to manage the listening/unlistening of all sorts of
+ * events:
+ * - events from OpenLayers
+ * - events from Closure Library
+ *
+ * @constructor
+ * @struct
+ * @ngdoc service
+ * @ngname ngeoEventHelper
+ * @ngInject
+ */
+ngeo.EventHelper = function() {
+
+  /**
+   * @type {Object.<number|string, ngeo.EventHelper.ListenerKeys>}
+   * @private
+   */
+  this.listenerKeys_ = {};
+
+};
+
+
+/**
+ * Utility method to add a listener key bound to a unique id. The key can
+ * come from an `ol.events` (default) or `goog.events`.
+ * @param {number|string} uid Unique id.
+ * @param {ol.EventsKey|goog.events.Key} key Key.
+ * @param {boolean=} opt_isol Whether it's an OpenLayers event or not. Defaults
+ *     to true.
+ * @export
+ */
+ngeo.EventHelper.prototype.addListenerKey = function(uid, key, opt_isol) {
+  if (!this.listenerKeys_[uid]) {
+    this.initListenerKey_(uid);
+  }
+
+  var isol = opt_isol !== undefined ? opt_isol : true;
+  if (isol) {
+    this.listenerKeys_[uid].ol.push(/** @type {ol.EventsKey} */ (key));
+  } else {
+    this.listenerKeys_[uid].goog.push(/** @type {goog.events.Key} */ (key));
+  }
+};
+
+
+/**
+ * Clear all listener keys from the given unique id.
+ * @param {number|string} uid Unique id.
+ * @export
+ */
+ngeo.EventHelper.prototype.clearListenerKey = function(uid) {
+  this.initListenerKey_(uid);
+};
+
+
+/**
+ * Utility method that does 2 things:
+ * - initialize the listener keys of a given uid with an array (if that key
+ *   has not array set yet)
+ * - unlisten any events if the array already exists for the given uid and
+ *   empty the array.
+ * @param {number|string} uid Unique id.
+ * @private
+ */
+ngeo.EventHelper.prototype.initListenerKey_ = function(uid) {
+  if (!this.listenerKeys_[uid]) {
+    this.listenerKeys_[uid] = {
+      goog: [],
+      ol: []
+    };
+  } else {
+    if (this.listenerKeys_[uid].goog.length) {
+      this.listenerKeys_[uid].goog.forEach(function(key) {
+        goog.events.unlistenByKey(key);
+      }, this);
+      this.listenerKeys_[uid].goog.length = 0;
+    }
+    if (this.listenerKeys_[uid].ol.length) {
+      this.listenerKeys_[uid].ol.forEach(function(key) {
+        ol.events.unlistenByKey(key);
+      }, this);
+      this.listenerKeys_[uid].ol.length = 0;
+    }
+  }
+};
+
+
+/**
+ * @typedef {{
+ *     goog: (Array.<goog.events.Key>),
+ *     ol: (Array.<ol.EventsKey>)
+ * }}
+ */
+ngeo.EventHelper.ListenerKeys;
+
+
+ngeo.module.service('ngeoEventHelper', ngeo.EventHelper);
+
+goog.provide('ngeo.AttributesController');
+goog.provide('ngeo.attributesDirective');
+
+goog.require('ngeo');
+goog.require('ngeo.EventHelper');
+
+/**
+ * Directive used to render the attributes of a feature into a form.
+ * Example:
+ *
+ *     <ngeo-attributes
+ *       ngeo-attributes-attributes="::ctrl.attributes"
+ *       ngeo-attributes-disabled="ctrl.attributesDisabled"
+ *       ngeo-attributes-feature="::ctrl.feature">
+ *     </ngeo-attributes>
+ *
+ * @htmlAttribute {Array.<ngeox.Attribute>} ngeo-attributes-attributes The
+ *     list of attributes to use.
+ * @htmlAttribute {boolean} ngeo-attributes-disabled Whether the fieldset should
+ *     be disabled or not.
+ * @htmlAttribute {ol.Feature} ngeo-attributes-feature The feature.
+ * @return {angular.Directive} The directive specs.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoAttributes
+ */
+ngeo.attributesDirective = function() {
+  return {
+    controller: 'ngeoAttributesController',
+    scope: true,
+    bindToController: {
+      'attributes': '=ngeoAttributesAttributes',
+      'disabled': '<ngeoAttributesDisabled',
+      'feature': '=ngeoAttributesFeature'
+    },
+    controllerAs: 'attrCtrl',
+    templateUrl: ngeo.baseTemplateUrl + '/attributes.html'
+  };
+};
+
+ngeo.module.directive('ngeoAttributes', ngeo.attributesDirective);
+
+
+/**
+ * @param {!angular.Scope} $scope Angular scope.
+ * @param {ngeo.EventHelper} ngeoEventHelper Ngeo event helper service
+ * @constructor
+ * @struct
+ * @ngInject
+ * @ngdoc controller
+ * @ngname ngeoAttributesController
+ */
+ngeo.AttributesController = function($scope, ngeoEventHelper) {
+
+  /**
+   * The list of attributes to create the form with.
+   * @type {Array.<ngeox.Attribute>}
+   * @export
+   */
+  this.attributes;
+
+  /**
+   * Whether the fieldset should be disabled or not.
+   * @type {boolean}
+   * @export
+   */
+  this.disabled = this.disabled === true;
+
+  /**
+   * The feature containing the values.
+   * @type {ol.Feature}
+   * @export
+   */
+  this.feature;
+
+  /**
+   * The properties bound to the form, initialized with the inner properties
+   * of the feature.
+   * @type {Object.<string, *>}
+   * @export
+   */
+  this.properties = this.feature.getProperties();
+
+  /**
+   * @type {!angular.Scope}
+   * @private
+   */
+  this.scope_ = $scope;
+
+  /**
+   * @type {ngeo.EventHelper}
+   * @private
+   */
+  this.ngeoEventHelper_ = ngeoEventHelper;
+
+  /**
+   * Datepicker options
+   * @type {Object}
+   * @export
+   */
+  this.dateOptions = {
+    'changeMonth': true,
+    'changeYear': true
+  };
+
+  // Listen to the feature inner properties change and apply them to the form
+  var uid = goog.getUid(this);
+  this.ngeoEventHelper_.addListenerKey(
+    uid,
+    ol.events.listen(
+      this.feature,
+      ol.ObjectEventType.PROPERTYCHANGE,
+      this.handleFeaturePropertyChange_,
+      this
+    ),
+    true
+  );
+
+  /**
+   * While changes happen from the form (from the template), they are applied
+   * to the feature inner properties. The 'propertychange' event registered
+   * above does the opposite, i.e. it listens to the feature inner properties
+   * changes and apply them to the form. To prevent circular issues, while
+   * applying changes coming from the form, this flag is set. While set, changes
+   * from the feature inner properties are ignored.
+   * @type {boolean}
+   * @private
+   */
+  this.updating_ = false;
+
+  $scope.$on('$destroy', this.handleDestroy_.bind(this));
+
+};
+
+
+/**
+ * Called when an input node value changes
+ * @param {string} name Attribute name
+ * @export
+ */
+ngeo.AttributesController.prototype.handleInputChange = function(name) {
+  this.updating_ = true;
+  var value = this.properties[name];
+  this.feature.set(name, value);
+  this.updating_ = false;
+};
+
+
+/**
+ * Cleanup event listeners.
+ * @private
+ */
+ngeo.AttributesController.prototype.handleDestroy_ = function() {
+  var uid = goog.getUid(this);
+  this.ngeoEventHelper_.clearListenerKey(uid);
+};
+
+
+/**
+ * @param {ol.ObjectEvent} evt Event.
+ * @private
+ */
+ngeo.AttributesController.prototype.handleFeaturePropertyChange_ = function(
+  evt
+) {
+  if (this.updating_) {
+    return;
+  }
+  this.properties[evt.key] = evt.target.get(evt.key);
+  this.scope_.$apply();
+};
+
+
+ngeo.module.controller('ngeoAttributesController', ngeo.AttributesController);
+
+// Copyright 2008 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Simple utilities for dealing with URI strings.
+ *
+ * This is intended to be a lightweight alternative to constructing goog.Uri
+ * objects.  Whereas goog.Uri adds several kilobytes to the binary regardless
+ * of how much of its functionality you use, this is designed to be a set of
+ * mostly-independent utilities so that the compiler includes only what is
+ * necessary for the task.  Estimated savings of porting is 5k pre-gzip and
+ * 1.5k post-gzip.  To ensure the savings remain, future developers should
+ * avoid adding new functionality to existing functions, but instead create
+ * new ones and factor out shared code.
+ *
+ * Many of these utilities have limited functionality, tailored to common
+ * cases.  The query parameter utilities assume that the parameter keys are
+ * already encoded, since most keys are compile-time alphanumeric strings.  The
+ * query parameter mutation utilities also do not tolerate fragment identifiers.
+ *
+ * By design, these functions can be slower than goog.Uri equivalents.
+ * Repeated calls to some of functions may be quadratic in behavior for IE,
+ * although the effect is somewhat limited given the 2kb limit.
+ *
+ * One advantage of the limited functionality here is that this approach is
+ * less sensitive to differences in URI encodings than goog.Uri, since these
+ * functions operate on strings directly, rather than decoding them and
+ * then re-encoding.
+ *
+ * Uses features of RFC 3986 for parsing/formatting URIs:
+ *   http://www.ietf.org/rfc/rfc3986.txt
+ *
+ * @author gboyer@google.com (Garrett Boyer) - The "lightened" design.
+ */
+
+goog.provide('goog.uri.utils');
+goog.provide('goog.uri.utils.ComponentIndex');
+goog.provide('goog.uri.utils.QueryArray');
+goog.provide('goog.uri.utils.QueryValue');
+goog.provide('goog.uri.utils.StandardQueryParam');
+
+goog.require('goog.asserts');
+goog.require('goog.string');
+
+
+/**
+ * Character codes inlined to avoid object allocations due to charCode.
+ * @enum {number}
+ * @private
+ */
+goog.uri.utils.CharCode_ = {
+  AMPERSAND: 38,
+  EQUAL: 61,
+  HASH: 35,
+  QUESTION: 63
+};
+
+
+/**
+ * Builds a URI string from already-encoded parts.
+ *
+ * No encoding is performed.  Any component may be omitted as either null or
+ * undefined.
+ *
+ * @param {?string=} opt_scheme The scheme such as 'http'.
+ * @param {?string=} opt_userInfo The user name before the '@'.
+ * @param {?string=} opt_domain The domain such as 'www.google.com', already
+ *     URI-encoded.
+ * @param {(string|number|null)=} opt_port The port number.
+ * @param {?string=} opt_path The path, already URI-encoded.  If it is not
+ *     empty, it must begin with a slash.
+ * @param {?string=} opt_queryData The URI-encoded query data.
+ * @param {?string=} opt_fragment The URI-encoded fragment identifier.
+ * @return {string} The fully combined URI.
+ */
+goog.uri.utils.buildFromEncodedParts = function(
+    opt_scheme, opt_userInfo, opt_domain, opt_port, opt_path, opt_queryData,
+    opt_fragment) {
+  var out = '';
+
+  if (opt_scheme) {
+    out += opt_scheme + ':';
+  }
+
+  if (opt_domain) {
+    out += '//';
+
+    if (opt_userInfo) {
+      out += opt_userInfo + '@';
+    }
+
+    out += opt_domain;
+
+    if (opt_port) {
+      out += ':' + opt_port;
+    }
+  }
+
+  if (opt_path) {
+    out += opt_path;
+  }
+
+  if (opt_queryData) {
+    out += '?' + opt_queryData;
+  }
+
+  if (opt_fragment) {
+    out += '#' + opt_fragment;
+  }
+
+  return out;
+};
+
+
+/**
+ * A regular expression for breaking a URI into its component parts.
+ *
+ * {@link http://www.ietf.org/rfc/rfc3986.txt} says in Appendix B
+ * As the "first-match-wins" algorithm is identical to the "greedy"
+ * disambiguation method used by POSIX regular expressions, it is natural and
+ * commonplace to use a regular expression for parsing the potential five
+ * components of a URI reference.
+ *
+ * The following line is the regular expression for breaking-down a
+ * well-formed URI reference into its components.
+ *
+ * <pre>
+ * ^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?
+ *  12            3  4          5       6  7        8 9
+ * </pre>
+ *
+ * The numbers in the second line above are only to assist readability; they
+ * indicate the reference points for each subexpression (i.e., each paired
+ * parenthesis). We refer to the value matched for subexpression <n> as $<n>.
+ * For example, matching the above expression to
+ * <pre>
+ *     http://www.ics.uci.edu/pub/ietf/uri/#Related
+ * </pre>
+ * results in the following subexpression matches:
+ * <pre>
+ *    $1 = http:
+ *    $2 = http
+ *    $3 = //www.ics.uci.edu
+ *    $4 = www.ics.uci.edu
+ *    $5 = /pub/ietf/uri/
+ *    $6 = <undefined>
+ *    $7 = <undefined>
+ *    $8 = #Related
+ *    $9 = Related
+ * </pre>
+ * where <undefined> indicates that the component is not present, as is the
+ * case for the query component in the above example. Therefore, we can
+ * determine the value of the five components as
+ * <pre>
+ *    scheme    = $2
+ *    authority = $4
+ *    path      = $5
+ *    query     = $7
+ *    fragment  = $9
+ * </pre>
+ *
+ * The regular expression has been modified slightly to expose the
+ * userInfo, domain, and port separately from the authority.
+ * The modified version yields
+ * <pre>
+ *    $1 = http              scheme
+ *    $2 = <undefined>       userInfo -\
+ *    $3 = www.ics.uci.edu   domain     | authority
+ *    $4 = <undefined>       port     -/
+ *    $5 = /pub/ietf/uri/    path
+ *    $6 = <undefined>       query without ?
+ *    $7 = Related           fragment without #
+ * </pre>
+ * @type {!RegExp}
+ * @private
+ */
+goog.uri.utils.splitRe_ = new RegExp(
+    '^' +
+    '(?:' +
+    '([^:/?#.]+)' +  // scheme - ignore special characters
+                     // used by other URL parts such as :,
+                     // ?, /, #, and .
+    ':)?' +
+    '(?://' +
+    '(?:([^/?#]*)@)?' +  // userInfo
+    '([^/#?]*?)' +       // domain
+    '(?::([0-9]+))?' +   // port
+    '(?=[/#?]|$)' +      // authority-terminating character
+    ')?' +
+    '([^?#]+)?' +        // path
+    '(?:\\?([^#]*))?' +  // query
+    '(?:#(.*))?' +       // fragment
+    '$');
+
+
+/**
+ * The index of each URI component in the return value of goog.uri.utils.split.
+ * @enum {number}
+ */
+goog.uri.utils.ComponentIndex = {
+  SCHEME: 1,
+  USER_INFO: 2,
+  DOMAIN: 3,
+  PORT: 4,
+  PATH: 5,
+  QUERY_DATA: 6,
+  FRAGMENT: 7
+};
+
+
+/**
+ * Splits a URI into its component parts.
+ *
+ * Each component can be accessed via the component indices; for example:
+ * <pre>
+ * goog.uri.utils.split(someStr)[goog.uri.utils.CompontentIndex.QUERY_DATA];
+ * </pre>
+ *
+ * @param {string} uri The URI string to examine.
+ * @return {!Array<string|undefined>} Each component still URI-encoded.
+ *     Each component that is present will contain the encoded value, whereas
+ *     components that are not present will be undefined or empty, depending
+ *     on the browser's regular expression implementation.  Never null, since
+ *     arbitrary strings may still look like path names.
+ */
+goog.uri.utils.split = function(uri) {
+  // See @return comment -- never null.
+  return /** @type {!Array<string|undefined>} */ (
+      uri.match(goog.uri.utils.splitRe_));
+};
+
+
+/**
+ * @param {?string} uri A possibly null string.
+ * @param {boolean=} opt_preserveReserved If true, percent-encoding of RFC-3986
+ *     reserved characters will not be removed.
+ * @return {?string} The string URI-decoded, or null if uri is null.
+ * @private
+ */
+goog.uri.utils.decodeIfPossible_ = function(uri, opt_preserveReserved) {
+  if (!uri) {
+    return uri;
+  }
+
+  return opt_preserveReserved ? decodeURI(uri) : decodeURIComponent(uri);
+};
+
+
+/**
+ * Gets a URI component by index.
+ *
+ * It is preferred to use the getPathEncoded() variety of functions ahead,
+ * since they are more readable.
+ *
+ * @param {goog.uri.utils.ComponentIndex} componentIndex The component index.
+ * @param {string} uri The URI to examine.
+ * @return {?string} The still-encoded component, or null if the component
+ *     is not present.
+ * @private
+ */
+goog.uri.utils.getComponentByIndex_ = function(componentIndex, uri) {
+  // Convert undefined, null, and empty string into null.
+  return goog.uri.utils.split(uri)[componentIndex] || null;
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The protocol or scheme, or null if none.  Does not
+ *     include trailing colons or slashes.
+ */
+goog.uri.utils.getScheme = function(uri) {
+  return goog.uri.utils.getComponentByIndex_(
+      goog.uri.utils.ComponentIndex.SCHEME, uri);
+};
+
+
+/**
+ * Gets the effective scheme for the URL.  If the URL is relative then the
+ * scheme is derived from the page's location.
+ * @param {string} uri The URI to examine.
+ * @return {string} The protocol or scheme, always lower case.
+ */
+goog.uri.utils.getEffectiveScheme = function(uri) {
+  var scheme = goog.uri.utils.getScheme(uri);
+  if (!scheme && goog.global.self && goog.global.self.location) {
+    var protocol = goog.global.self.location.protocol;
+    scheme = protocol.substr(0, protocol.length - 1);
+  }
+  // NOTE: When called from a web worker in Firefox 3.5, location maybe null.
+  // All other browsers with web workers support self.location from the worker.
+  return scheme ? scheme.toLowerCase() : '';
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The user name still encoded, or null if none.
+ */
+goog.uri.utils.getUserInfoEncoded = function(uri) {
+  return goog.uri.utils.getComponentByIndex_(
+      goog.uri.utils.ComponentIndex.USER_INFO, uri);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The decoded user info, or null if none.
+ */
+goog.uri.utils.getUserInfo = function(uri) {
+  return goog.uri.utils.decodeIfPossible_(
+      goog.uri.utils.getUserInfoEncoded(uri));
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The domain name still encoded, or null if none.
+ */
+goog.uri.utils.getDomainEncoded = function(uri) {
+  return goog.uri.utils.getComponentByIndex_(
+      goog.uri.utils.ComponentIndex.DOMAIN, uri);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The decoded domain, or null if none.
+ */
+goog.uri.utils.getDomain = function(uri) {
+  return goog.uri.utils.decodeIfPossible_(
+      goog.uri.utils.getDomainEncoded(uri), true /* opt_preserveReserved */);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?number} The port number, or null if none.
+ */
+goog.uri.utils.getPort = function(uri) {
+  // Coerce to a number.  If the result of getComponentByIndex_ is null or
+  // non-numeric, the number coersion yields NaN.  This will then return
+  // null for all non-numeric cases (though also zero, which isn't a relevant
+  // port number).
+  return Number(
+             goog.uri.utils.getComponentByIndex_(
+                 goog.uri.utils.ComponentIndex.PORT, uri)) ||
+      null;
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The path still encoded, or null if none. Includes the
+ *     leading slash, if any.
+ */
+goog.uri.utils.getPathEncoded = function(uri) {
+  return goog.uri.utils.getComponentByIndex_(
+      goog.uri.utils.ComponentIndex.PATH, uri);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The decoded path, or null if none.  Includes the leading
+ *     slash, if any.
+ */
+goog.uri.utils.getPath = function(uri) {
+  return goog.uri.utils.decodeIfPossible_(
+      goog.uri.utils.getPathEncoded(uri), true /* opt_preserveReserved */);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The query data still encoded, or null if none.  Does not
+ *     include the question mark itself.
+ */
+goog.uri.utils.getQueryData = function(uri) {
+  return goog.uri.utils.getComponentByIndex_(
+      goog.uri.utils.ComponentIndex.QUERY_DATA, uri);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The fragment identifier, or null if none.  Does not
+ *     include the hash mark itself.
+ */
+goog.uri.utils.getFragmentEncoded = function(uri) {
+  // The hash mark may not appear in any other part of the URL.
+  var hashIndex = uri.indexOf('#');
+  return hashIndex < 0 ? null : uri.substr(hashIndex + 1);
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @param {?string} fragment The encoded fragment identifier, or null if none.
+ *     Does not include the hash mark itself.
+ * @return {string} The URI with the fragment set.
+ */
+goog.uri.utils.setFragmentEncoded = function(uri, fragment) {
+  return goog.uri.utils.removeFragment(uri) + (fragment ? '#' + fragment : '');
+};
+
+
+/**
+ * @param {string} uri The URI to examine.
+ * @return {?string} The decoded fragment identifier, or null if none.  Does
+ *     not include the hash mark.
+ */
+goog.uri.utils.getFragment = function(uri) {
+  return goog.uri.utils.decodeIfPossible_(
+      goog.uri.utils.getFragmentEncoded(uri));
+};
+
+
+/**
+ * Extracts everything up to the port of the URI.
+ * @param {string} uri The URI string.
+ * @return {string} Everything up to and including the port.
+ */
+goog.uri.utils.getHost = function(uri) {
+  var pieces = goog.uri.utils.split(uri);
+  return goog.uri.utils.buildFromEncodedParts(
+      pieces[goog.uri.utils.ComponentIndex.SCHEME],
+      pieces[goog.uri.utils.ComponentIndex.USER_INFO],
+      pieces[goog.uri.utils.ComponentIndex.DOMAIN],
+      pieces[goog.uri.utils.ComponentIndex.PORT]);
+};
+
+
+/**
+ * Extracts the path of the URL and everything after.
+ * @param {string} uri The URI string.
+ * @return {string} The URI, starting at the path and including the query
+ *     parameters and fragment identifier.
+ */
+goog.uri.utils.getPathAndAfter = function(uri) {
+  var pieces = goog.uri.utils.split(uri);
+  return goog.uri.utils.buildFromEncodedParts(
+      null, null, null, null, pieces[goog.uri.utils.ComponentIndex.PATH],
+      pieces[goog.uri.utils.ComponentIndex.QUERY_DATA],
+      pieces[goog.uri.utils.ComponentIndex.FRAGMENT]);
+};
+
+
+/**
+ * Gets the URI with the fragment identifier removed.
+ * @param {string} uri The URI to examine.
+ * @return {string} Everything preceding the hash mark.
+ */
+goog.uri.utils.removeFragment = function(uri) {
+  // The hash mark may not appear in any other part of the URL.
+  var hashIndex = uri.indexOf('#');
+  return hashIndex < 0 ? uri : uri.substr(0, hashIndex);
+};
+
+
+/**
+ * Ensures that two URI's have the exact same domain, scheme, and port.
+ *
+ * Unlike the version in goog.Uri, this checks protocol, and therefore is
+ * suitable for checking against the browser's same-origin policy.
+ *
+ * @param {string} uri1 The first URI.
+ * @param {string} uri2 The second URI.
+ * @return {boolean} Whether they have the same scheme, domain and port.
+ */
+goog.uri.utils.haveSameDomain = function(uri1, uri2) {
+  var pieces1 = goog.uri.utils.split(uri1);
+  var pieces2 = goog.uri.utils.split(uri2);
+  return pieces1[goog.uri.utils.ComponentIndex.DOMAIN] ==
+      pieces2[goog.uri.utils.ComponentIndex.DOMAIN] &&
+      pieces1[goog.uri.utils.ComponentIndex.SCHEME] ==
+      pieces2[goog.uri.utils.ComponentIndex.SCHEME] &&
+      pieces1[goog.uri.utils.ComponentIndex.PORT] ==
+      pieces2[goog.uri.utils.ComponentIndex.PORT];
+};
+
+
+/**
+ * Asserts that there are no fragment or query identifiers, only in uncompiled
+ * mode.
+ * @param {string} uri The URI to examine.
+ * @private
+ */
+goog.uri.utils.assertNoFragmentsOrQueries_ = function(uri) {
+  // NOTE: would use goog.asserts here, but jscompiler doesn't know that
+  // indexOf has no side effects.
+  if (goog.DEBUG && (uri.indexOf('#') >= 0 || uri.indexOf('?') >= 0)) {
+    throw Error(
+        'goog.uri.utils: Fragment or query identifiers are not ' +
+        'supported: [' + uri + ']');
+  }
+};
+
+
+/**
+ * Supported query parameter values by the parameter serializing utilities.
+ *
+ * If a value is null or undefined, the key-value pair is skipped, as an easy
+ * way to omit parameters conditionally.  Non-array parameters are converted
+ * to a string and URI encoded.  Array values are expanded into multiple
+ * &key=value pairs, with each element stringized and URI-encoded.
+ *
+ * @typedef {*}
+ */
+goog.uri.utils.QueryValue;
+
+
+/**
+ * An array representing a set of query parameters with alternating keys
+ * and values.
+ *
+ * Keys are assumed to be URI encoded already and live at even indices.  See
+ * goog.uri.utils.QueryValue for details on how parameter values are encoded.
+ *
+ * Example:
+ * <pre>
+ * var data = [
+ *   // Simple param: ?name=BobBarker
+ *   'name', 'BobBarker',
+ *   // Conditional param -- may be omitted entirely.
+ *   'specialDietaryNeeds', hasDietaryNeeds() ? getDietaryNeeds() : null,
+ *   // Multi-valued param: &house=LosAngeles&house=NewYork&house=null
+ *   'house', ['LosAngeles', 'NewYork', null]
+ * ];
+ * </pre>
+ *
+ * @typedef {!Array<string|goog.uri.utils.QueryValue>}
+ */
+goog.uri.utils.QueryArray;
+
+
+/**
+ * Parses encoded query parameters and calls callback function for every
+ * parameter found in the string.
+ *
+ * Missing value of parameter (e.g. “…&key&…”) is treated as if the value was an
+ * empty string.  Keys may be empty strings (e.g. “…&=value&…”) which also means
+ * that “…&=&…” and “…&&…” will result in an empty key and value.
+ *
+ * @param {string} encodedQuery Encoded query string excluding question mark at
+ *     the beginning.
+ * @param {function(string, string)} callback Function called for every
+ *     parameter found in query string.  The first argument (name) will not be
+ *     urldecoded (so the function is consistent with buildQueryData), but the
+ *     second will.  If the parameter has no value (i.e. “=” was not present)
+ *     the second argument (value) will be an empty string.
+ */
+goog.uri.utils.parseQueryData = function(encodedQuery, callback) {
+  if (!encodedQuery) {
+    return;
+  }
+  var pairs = encodedQuery.split('&');
+  for (var i = 0; i < pairs.length; i++) {
+    var indexOfEquals = pairs[i].indexOf('=');
+    var name = null;
+    var value = null;
+    if (indexOfEquals >= 0) {
+      name = pairs[i].substring(0, indexOfEquals);
+      value = pairs[i].substring(indexOfEquals + 1);
+    } else {
+      name = pairs[i];
+    }
+    callback(name, value ? goog.string.urlDecode(value) : '');
+  }
+};
+
+
+/**
+ * Appends a URI and query data in a string buffer with special preconditions.
+ *
+ * Internal implementation utility, performing very few object allocations.
+ *
+ * @param {!Array<string|undefined>} buffer A string buffer.  The first element
+ *     must be the base URI, and may have a fragment identifier.  If the array
+ *     contains more than one element, the second element must be an ampersand,
+ *     and may be overwritten, depending on the base URI.  Undefined elements
+ *     are treated as empty-string.
+ * @return {string} The concatenated URI and query data.
+ * @private
+ */
+goog.uri.utils.appendQueryData_ = function(buffer) {
+  if (buffer[1]) {
+    // At least one query parameter was added.  We need to check the
+    // punctuation mark, which is currently an ampersand, and also make sure
+    // there aren't any interfering fragment identifiers.
+    var baseUri = /** @type {string} */ (buffer[0]);
+    var hashIndex = baseUri.indexOf('#');
+    if (hashIndex >= 0) {
+      // Move the fragment off the base part of the URI into the end.
+      buffer.push(baseUri.substr(hashIndex));
+      buffer[0] = baseUri = baseUri.substr(0, hashIndex);
+    }
+    var questionIndex = baseUri.indexOf('?');
+    if (questionIndex < 0) {
+      // No question mark, so we need a question mark instead of an ampersand.
+      buffer[1] = '?';
+    } else if (questionIndex == baseUri.length - 1) {
+      // Question mark is the very last character of the existing URI, so don't
+      // append an additional delimiter.
+      buffer[1] = undefined;
+    }
+  }
+
+  return buffer.join('');
+};
+
+
+/**
+ * Appends key=value pairs to an array, supporting multi-valued objects.
+ * @param {string} key The key prefix.
+ * @param {goog.uri.utils.QueryValue} value The value to serialize.
+ * @param {!Array<string>} pairs The array to which the 'key=value' strings
+ *     should be appended.
+ * @private
+ */
+goog.uri.utils.appendKeyValuePairs_ = function(key, value, pairs) {
+  if (goog.isArray(value)) {
+    // Convince the compiler it's an array.
+    goog.asserts.assertArray(value);
+    for (var j = 0; j < value.length; j++) {
+      // Convert to string explicitly, to short circuit the null and array
+      // logic in this function -- this ensures that null and undefined get
+      // written as literal 'null' and 'undefined', and arrays don't get
+      // expanded out but instead encoded in the default way.
+      goog.uri.utils.appendKeyValuePairs_(key, String(value[j]), pairs);
+    }
+  } else if (value != null) {
+    // Skip a top-level null or undefined entirely.
+    pairs.push(
+        '&', key,
+        // Check for empty string. Zero gets encoded into the url as literal
+        // strings.  For empty string, skip the equal sign, to be consistent
+        // with UriBuilder.java.
+        value === '' ? '' : '=', goog.string.urlEncode(value));
+  }
+};
+
+
+/**
+ * Builds a buffer of query data from a sequence of alternating keys and values.
+ *
+ * @param {!Array<string|undefined>} buffer A string buffer to append to.  The
+ *     first element appended will be an '&', and may be replaced by the caller.
+ * @param {!goog.uri.utils.QueryArray|!Arguments} keysAndValues An array with
+ *     alternating keys and values -- see the typedef.
+ * @param {number=} opt_startIndex A start offset into the arary, defaults to 0.
+ * @return {!Array<string|undefined>} The buffer argument.
+ * @private
+ */
+goog.uri.utils.buildQueryDataBuffer_ = function(
+    buffer, keysAndValues, opt_startIndex) {
+  goog.asserts.assert(
+      Math.max(keysAndValues.length - (opt_startIndex || 0), 0) % 2 == 0,
+      'goog.uri.utils: Key/value lists must be even in length.');
+
+  for (var i = opt_startIndex || 0; i < keysAndValues.length; i += 2) {
+    goog.uri.utils.appendKeyValuePairs_(
+        keysAndValues[i], keysAndValues[i + 1], buffer);
+  }
+
+  return buffer;
+};
+
+
+/**
+ * Builds a query data string from a sequence of alternating keys and values.
+ * Currently generates "&key&" for empty args.
+ *
+ * @param {goog.uri.utils.QueryArray} keysAndValues Alternating keys and
+ *     values.  See the typedef.
+ * @param {number=} opt_startIndex A start offset into the arary, defaults to 0.
+ * @return {string} The encoded query string, in the form 'a=1&b=2'.
+ */
+goog.uri.utils.buildQueryData = function(keysAndValues, opt_startIndex) {
+  var buffer =
+      goog.uri.utils.buildQueryDataBuffer_([], keysAndValues, opt_startIndex);
+  buffer[0] = '';  // Remove the leading ampersand.
+  return buffer.join('');
+};
+
+
+/**
+ * Builds a buffer of query data from a map.
+ *
+ * @param {!Array<string|undefined>} buffer A string buffer to append to.  The
+ *     first element appended will be an '&', and may be replaced by the caller.
+ * @param {!Object<string, goog.uri.utils.QueryValue>} map An object where keys
+ *     are URI-encoded parameter keys, and the values conform to the contract
+ *     specified in the goog.uri.utils.QueryValue typedef.
+ * @return {!Array<string|undefined>} The buffer argument.
+ * @private
+ */
+goog.uri.utils.buildQueryDataBufferFromMap_ = function(buffer, map) {
+  for (var key in map) {
+    goog.uri.utils.appendKeyValuePairs_(key, map[key], buffer);
+  }
+
+  return buffer;
+};
+
+
+/**
+ * Builds a query data string from a map.
+ * Currently generates "&key&" for empty args.
+ *
+ * @param {!Object<string, goog.uri.utils.QueryValue>} map An object where keys
+ *     are URI-encoded parameter keys, and the values are arbitrary types
+ *     or arrays. Keys with a null value are dropped.
+ * @return {string} The encoded query string, in the form 'a=1&b=2'.
+ */
+goog.uri.utils.buildQueryDataFromMap = function(map) {
+  var buffer = goog.uri.utils.buildQueryDataBufferFromMap_([], map);
+  buffer[0] = '';
+  return buffer.join('');
+};
+
+
+/**
+ * Appends URI parameters to an existing URI.
+ *
+ * The variable arguments may contain alternating keys and values.  Keys are
+ * assumed to be already URI encoded.  The values should not be URI-encoded,
+ * and will instead be encoded by this function.
+ * <pre>
+ * appendParams('http://www.foo.com?existing=true',
+ *     'key1', 'value1',
+ *     'key2', 'value?willBeEncoded',
+ *     'key3', ['valueA', 'valueB', 'valueC'],
+ *     'key4', null);
+ * result: 'http://www.foo.com?existing=true&' +
+ *     'key1=value1&' +
+ *     'key2=value%3FwillBeEncoded&' +
+ *     'key3=valueA&key3=valueB&key3=valueC'
+ * </pre>
+ *
+ * A single call to this function will not exhibit quadratic behavior in IE,
+ * whereas multiple repeated calls may, although the effect is limited by
+ * fact that URL's generally can't exceed 2kb.
+ *
+ * @param {string} uri The original URI, which may already have query data.
+ * @param {...(goog.uri.utils.QueryArray|string|goog.uri.utils.QueryValue)}
+ * var_args
+ *     An array or argument list conforming to goog.uri.utils.QueryArray.
+ * @return {string} The URI with all query parameters added.
+ */
+goog.uri.utils.appendParams = function(uri, var_args) {
+  return goog.uri.utils.appendQueryData_(
+      arguments.length == 2 ?
+          goog.uri.utils.buildQueryDataBuffer_([uri], arguments[1], 0) :
+          goog.uri.utils.buildQueryDataBuffer_([uri], arguments, 1));
+};
+
+
+/**
+ * Appends query parameters from a map.
+ *
+ * @param {string} uri The original URI, which may already have query data.
+ * @param {!Object<goog.uri.utils.QueryValue>} map An object where keys are
+ *     URI-encoded parameter keys, and the values are arbitrary types or arrays.
+ *     Keys with a null value are dropped.
+ * @return {string} The new parameters.
+ */
+goog.uri.utils.appendParamsFromMap = function(uri, map) {
+  return goog.uri.utils.appendQueryData_(
+      goog.uri.utils.buildQueryDataBufferFromMap_([uri], map));
+};
+
+
+/**
+ * Appends a single URI parameter.
+ *
+ * Repeated calls to this can exhibit quadratic behavior in IE6 due to the
+ * way string append works, though it should be limited given the 2kb limit.
+ *
+ * @param {string} uri The original URI, which may already have query data.
+ * @param {string} key The key, which must already be URI encoded.
+ * @param {*=} opt_value The value, which will be stringized and encoded
+ *     (assumed not already to be encoded).  If omitted, undefined, or null, the
+ *     key will be added as a valueless parameter.
+ * @return {string} The URI with the query parameter added.
+ */
+goog.uri.utils.appendParam = function(uri, key, opt_value) {
+  var paramArr = [uri, '&', key];
+  if (goog.isDefAndNotNull(opt_value)) {
+    paramArr.push('=', goog.string.urlEncode(opt_value));
+  }
+  return goog.uri.utils.appendQueryData_(paramArr);
+};
+
+
+/**
+ * Finds the next instance of a query parameter with the specified name.
+ *
+ * Does not instantiate any objects.
+ *
+ * @param {string} uri The URI to search.  May contain a fragment identifier
+ *     if opt_hashIndex is specified.
+ * @param {number} startIndex The index to begin searching for the key at.  A
+ *     match may be found even if this is one character after the ampersand.
+ * @param {string} keyEncoded The URI-encoded key.
+ * @param {number} hashOrEndIndex Index to stop looking at.  If a hash
+ *     mark is present, it should be its index, otherwise it should be the
+ *     length of the string.
+ * @return {number} The position of the first character in the key's name,
+ *     immediately after either a question mark or a dot.
+ * @private
+ */
+goog.uri.utils.findParam_ = function(
+    uri, startIndex, keyEncoded, hashOrEndIndex) {
+  var index = startIndex;
+  var keyLength = keyEncoded.length;
+
+  // Search for the key itself and post-filter for surronuding punctuation,
+  // rather than expensively building a regexp.
+  while ((index = uri.indexOf(keyEncoded, index)) >= 0 &&
+         index < hashOrEndIndex) {
+    var precedingChar = uri.charCodeAt(index - 1);
+    // Ensure that the preceding character is '&' or '?'.
+    if (precedingChar == goog.uri.utils.CharCode_.AMPERSAND ||
+        precedingChar == goog.uri.utils.CharCode_.QUESTION) {
+      // Ensure the following character is '&', '=', '#', or NaN
+      // (end of string).
+      var followingChar = uri.charCodeAt(index + keyLength);
+      if (!followingChar || followingChar == goog.uri.utils.CharCode_.EQUAL ||
+          followingChar == goog.uri.utils.CharCode_.AMPERSAND ||
+          followingChar == goog.uri.utils.CharCode_.HASH) {
+        return index;
+      }
+    }
+    index += keyLength + 1;
+  }
+
+  return -1;
+};
+
+
+/**
+ * Regular expression for finding a hash mark or end of string.
+ * @type {RegExp}
+ * @private
+ */
+goog.uri.utils.hashOrEndRe_ = /#|$/;
+
+
+/**
+ * Determines if the URI contains a specific key.
+ *
+ * Performs no object instantiations.
+ *
+ * @param {string} uri The URI to process.  May contain a fragment
+ *     identifier.
+ * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
+ * @return {boolean} Whether the key is present.
+ */
+goog.uri.utils.hasParam = function(uri, keyEncoded) {
+  return goog.uri.utils.findParam_(
+             uri, 0, keyEncoded, uri.search(goog.uri.utils.hashOrEndRe_)) >= 0;
+};
+
+
+/**
+ * Gets the first value of a query parameter.
+ * @param {string} uri The URI to process.  May contain a fragment.
+ * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
+ * @return {?string} The first value of the parameter (URI-decoded), or null
+ *     if the parameter is not found.
+ */
+goog.uri.utils.getParamValue = function(uri, keyEncoded) {
+  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
+  var foundIndex =
+      goog.uri.utils.findParam_(uri, 0, keyEncoded, hashOrEndIndex);
+
+  if (foundIndex < 0) {
+    return null;
+  } else {
+    var endPosition = uri.indexOf('&', foundIndex);
+    if (endPosition < 0 || endPosition > hashOrEndIndex) {
+      endPosition = hashOrEndIndex;
+    }
+    // Progress forth to the end of the "key=" or "key&" substring.
+    foundIndex += keyEncoded.length + 1;
+    // Use substr, because it (unlike substring) will return empty string
+    // if foundIndex > endPosition.
+    return goog.string.urlDecode(
+        uri.substr(foundIndex, endPosition - foundIndex));
+  }
+};
+
+
+/**
+ * Gets all values of a query parameter.
+ * @param {string} uri The URI to process.  May contain a fragment.
+ * @param {string} keyEncoded The URI-encoded key.  Case-sensitive.
+ * @return {!Array<string>} All URI-decoded values with the given key.
+ *     If the key is not found, this will have length 0, but never be null.
+ */
+goog.uri.utils.getParamValues = function(uri, keyEncoded) {
+  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
+  var position = 0;
+  var foundIndex;
+  var result = [];
+
+  while ((foundIndex = goog.uri.utils.findParam_(
+              uri, position, keyEncoded, hashOrEndIndex)) >= 0) {
+    // Find where this parameter ends, either the '&' or the end of the
+    // query parameters.
+    position = uri.indexOf('&', foundIndex);
+    if (position < 0 || position > hashOrEndIndex) {
+      position = hashOrEndIndex;
+    }
+
+    // Progress forth to the end of the "key=" or "key&" substring.
+    foundIndex += keyEncoded.length + 1;
+    // Use substr, because it (unlike substring) will return empty string
+    // if foundIndex > position.
+    result.push(
+        goog.string.urlDecode(uri.substr(foundIndex, position - foundIndex)));
+  }
+
+  return result;
+};
+
+
+/**
+ * Regexp to find trailing question marks and ampersands.
+ * @type {RegExp}
+ * @private
+ */
+goog.uri.utils.trailingQueryPunctuationRe_ = /[?&]($|#)/;
+
+
+/**
+ * Removes all instances of a query parameter.
+ * @param {string} uri The URI to process.  Must not contain a fragment.
+ * @param {string} keyEncoded The URI-encoded key.
+ * @return {string} The URI with all instances of the parameter removed.
+ */
+goog.uri.utils.removeParam = function(uri, keyEncoded) {
+  var hashOrEndIndex = uri.search(goog.uri.utils.hashOrEndRe_);
+  var position = 0;
+  var foundIndex;
+  var buffer = [];
+
+  // Look for a query parameter.
+  while ((foundIndex = goog.uri.utils.findParam_(
+              uri, position, keyEncoded, hashOrEndIndex)) >= 0) {
+    // Get the portion of the query string up to, but not including, the ?
+    // or & starting the parameter.
+    buffer.push(uri.substring(position, foundIndex));
+    // Progress to immediately after the '&'.  If not found, go to the end.
+    // Avoid including the hash mark.
+    position = Math.min(
+        (uri.indexOf('&', foundIndex) + 1) || hashOrEndIndex, hashOrEndIndex);
+  }
+
+  // Append everything that is remaining.
+  buffer.push(uri.substr(position));
+
+  // Join the buffer, and remove trailing punctuation that remains.
+  return buffer.join('').replace(
+      goog.uri.utils.trailingQueryPunctuationRe_, '$1');
+};
+
+
+/**
+ * Replaces all existing definitions of a parameter with a single definition.
+ *
+ * Repeated calls to this can exhibit quadratic behavior due to the need to
+ * find existing instances and reconstruct the string, though it should be
+ * limited given the 2kb limit.  Consider using appendParams to append multiple
+ * parameters in bulk.
+ *
+ * @param {string} uri The original URI, which may already have query data.
+ * @param {string} keyEncoded The key, which must already be URI encoded.
+ * @param {*} value The value, which will be stringized and encoded (assumed
+ *     not already to be encoded).
+ * @return {string} The URI with the query parameter added.
+ */
+goog.uri.utils.setParam = function(uri, keyEncoded, value) {
+  return goog.uri.utils.appendParam(
+      goog.uri.utils.removeParam(uri, keyEncoded), keyEncoded, value);
+};
+
+
+/**
+ * Generates a URI path using a given URI and a path with checks to
+ * prevent consecutive "//". The baseUri passed in must not contain
+ * query or fragment identifiers. The path to append may not contain query or
+ * fragment identifiers.
+ *
+ * @param {string} baseUri URI to use as the base.
+ * @param {string} path Path to append.
+ * @return {string} Updated URI.
+ */
+goog.uri.utils.appendPath = function(baseUri, path) {
+  goog.uri.utils.assertNoFragmentsOrQueries_(baseUri);
+
+  // Remove any trailing '/'
+  if (goog.string.endsWith(baseUri, '/')) {
+    baseUri = baseUri.substr(0, baseUri.length - 1);
+  }
+  // Remove any leading '/'
+  if (goog.string.startsWith(path, '/')) {
+    path = path.substr(1);
+  }
+  return goog.string.buildString(baseUri, '/', path);
+};
+
+
+/**
+ * Replaces the path.
+ * @param {string} uri URI to use as the base.
+ * @param {string} path New path.
+ * @return {string} Updated URI.
+ */
+goog.uri.utils.setPath = function(uri, path) {
+  // Add any missing '/'.
+  if (!goog.string.startsWith(path, '/')) {
+    path = '/' + path;
+  }
+  var parts = goog.uri.utils.split(uri);
+  return goog.uri.utils.buildFromEncodedParts(
+      parts[goog.uri.utils.ComponentIndex.SCHEME],
+      parts[goog.uri.utils.ComponentIndex.USER_INFO],
+      parts[goog.uri.utils.ComponentIndex.DOMAIN],
+      parts[goog.uri.utils.ComponentIndex.PORT], path,
+      parts[goog.uri.utils.ComponentIndex.QUERY_DATA],
+      parts[goog.uri.utils.ComponentIndex.FRAGMENT]);
+};
+
+
+/**
+ * Standard supported query parameters.
+ * @enum {string}
+ */
+goog.uri.utils.StandardQueryParam = {
+
+  /** Unused parameter for unique-ifying. */
+  RANDOM: 'zx'
+};
+
+
+/**
+ * Sets the zx parameter of a URI to a random value.
+ * @param {string} uri Any URI.
+ * @return {string} That URI with the "zx" parameter added or replaced to
+ *     contain a random string.
+ */
+goog.uri.utils.makeUnique = function(uri) {
+  return goog.uri.utils.setParam(
+      uri, goog.uri.utils.StandardQueryParam.RANDOM,
+      goog.string.getRandomString());
+};
+
+goog.provide('ngeo.LayerHelper');
+
+goog.require('ngeo');
+goog.require('ol.Collection');
+goog.require('ol.array');
+goog.require('ol.format.WMTSCapabilities');
+goog.require('ol.layer.Group');
+goog.require('ol.layer.Image');
+goog.require('ol.layer.Tile');
+goog.require('ol.source.ImageWMS');
+goog.require('ol.source.TileWMS');
+goog.require('ol.source.WMTS');
+goog.require('goog.uri.utils');
+
+
+/**
+ * Provides help functions that helps you to create and manage layers.
+ * @param {angular.$q} $q Angular promises/deferred service.
+ * @param {angular.$http} $http Angular http service.
+ * @constructor
+ * @struct
+ * @ngdoc service
+ * @ngname ngeoLayerHelper
+ * @ngInject
+ */
+ngeo.LayerHelper = function($q, $http) {
+
+  /**
+   * @type {angular.$q}
+   * @private
+   */
+  this.$q_ = $q;
+
+  /**
+   * @type {angular.$http}
+   * @private
+   */
+  this.$http_ = $http;
+};
+
+
+/**
+ * @const
+ */
+ngeo.LayerHelper.GROUP_KEY = 'groupName';
+
+
+/**
+ * @const
+ */
+ngeo.LayerHelper.REFRESH_PARAM = 'random';
+
+
+/**
+ * Create and return a basic WMS layer with only a source URL and a comma
+ * separated layers names (see {@link ol.source.ImageWMS}).
+ *
+ * @param {string} sourceURL The source URL.
+ * @param {string} sourceLayersName A comma separated names string.
+ * @param {string=} opt_serverType Type of the server ("mapserver",
+ *     "geoserver", "qgisserver", …).
+ * @param {string=} opt_time time parameter for layer queryable by time/periode
+ * @param {Object.<string, string>=} opt_params WMS parameters.
+ * @return {ol.layer.Image} WMS Layer.
+ * @export
+ */
+ngeo.LayerHelper.prototype.createBasicWMSLayer = function(sourceURL,
+    sourceLayersName, opt_serverType, opt_time, opt_params) {
+
+  var params = {'LAYERS': sourceLayersName};
+  var olServerType;
+  if (opt_time) {
+    params['TIME'] = opt_time;
+  }
+  if (opt_serverType) {
+    params['SERVERTYPE'] = opt_serverType;
+    // OpenLayers expects 'qgis' insteads of 'qgisserver'
+    olServerType = opt_serverType.replace('qgisserver', 'qgis');
+  }
+  var source = new ol.source.ImageWMS({
+    url: sourceURL,
+    params: params,
+    serverType: olServerType
+  });
+  if (opt_params) {
+    source.updateParams(opt_params);
+  }
+
+  return new ol.layer.Image({source: source});
+};
+
+
+/**
+ * Create and return a promise that provides a WMTS layer with source on
+ * success, no layer else.
+ * The WMTS layer source will be configured by the capabilities that are
+ * loaded from the given capabilitiesUrl.
+ * The style object described in the capabilities for this layer will be added
+ * as key 'capabilitiesStyles' as param of the new layer.
+ * @param {string} capabilitiesURL The getCapabilities url.
+ * @param {string} layerName The name of the layer.
+ * @param {Object.<string, string>=} opt_dimensions WMTS dimensions.
+ * @return {angular.$q.Promise.<ol.layer.Tile>} A Promise with a layer (with source) on success,
+ *     no layer else.
+ * @export
+ */
+ngeo.LayerHelper.prototype.createWMTSLayerFromCapabilitites = function(capabilitiesURL, layerName, opt_dimensions) {
+  var parser = new ol.format.WMTSCapabilities();
+  var layer = new ol.layer.Tile({
+    preload: Infinity
+  });
+  var $q = this.$q_;
+
+  return this.$http_.get(capabilitiesURL).then(function(response) {
+    var result;
+    if (response.data) {
+      result = parser.read(response.data);
+    }
+    if (result) {
+      var options = ol.source.WMTS.optionsFromCapabilities(result, {
+        layer: layerName
+      });
+      var source = new ol.source.WMTS(options);
+      if (opt_dimensions) {
+        source.updateDimensions(opt_dimensions);
+      }
+      layer.setSource(source);
+
+      // Add styles from capabilities as param of the layer
+      var layers = result['Contents']['Layer'];
+      var l = ol.array.find(layers, function(elt, index, array) {
+        return elt['Identifier'] == layerName;
+      });
+      layer.set('capabilitiesStyles', l['Style']);
+
+      return $q.resolve(layer);
+    }
+    return $q.reject('Failed to get WMTS capabilities from ' +
+        capabilitiesURL);
+  });
+};
+
+
+/**
+ * Create and return an ol.layer.Group. You can pass a collection of layers to
+ * directly add them in the returned group.
+ * @param {ol.Collection.<ol.layer.Base>=} opt_layers The layer to add to the
+ * returned Group.
+ * @return {ol.layer.Group} Layer group.
+ * @export
+ */
+ngeo.LayerHelper.prototype.createBasicGroup = function(opt_layers) {
+  var group = new ol.layer.Group();
+  if (goog.isDefAndNotNull(opt_layers)) {
+    group.setLayers(opt_layers);
+  }
+  return group;
+};
+
+
+/**
+ * Retrieve (or create if it doesn't exist) and return a group of layer from
+ * the base array of layers of a map. The given name is used as unique
+ * identifier. If the group is created, it will be automatically added to
+ * the map.
+ * @param {ol.Map} map A map.
+ * @param {string} groupName The name of the group.
+ * @return {ol.layer.Group} The group corresponding to the given name.
+ * @export
+ */
+ngeo.LayerHelper.prototype.getGroupFromMap = function(map, groupName) {
+  var groups = map.getLayerGroup().getLayers();
+  var group;
+  groups.getArray().some(function(existingGroup) {
+    if (existingGroup.get(ngeo.LayerHelper.GROUP_KEY) === groupName) {
+      group = /** @type {ol.layer.Group} */ (existingGroup);
+      return true;
+    } else {
+      return false;
+    }
+  });
+  if (!group) {
+    group = this.createBasicGroup();
+    group.set(ngeo.LayerHelper.GROUP_KEY, groupName);
+    map.addLayer(group);
+  }
+  return group;
+};
+
+
+/**
+ * Get an array of all layers in a group. The group can contain multiple levels
+ * of others groups.
+ * @param {ol.layer.Base} layer The base layer, mostly a group of layers.
+ * @return {Array.<ol.layer.Layer>} Layers.
+ * @export
+ */
+ngeo.LayerHelper.prototype.getFlatLayers = function(layer) {
+  return this.getFlatLayers_(layer, []);
+};
+
+
+/**
+ * Get an array of all layers in a group. The group can contain multiple levels
+ * of others groups.
+ * @param {ol.layer.Base} layer The base layer, mostly a group of layers.
+ * @param {Array.<ol.layer.Base>} array An array to add layers.
+ * @return {Array.<ol.layer.Layer>} Layers.
+ * @private
+ */
+ngeo.LayerHelper.prototype.getFlatLayers_ = function(layer, array) {
+  if (layer instanceof ol.layer.Group) {
+    var sublayers = layer.getLayers();
+    sublayers.forEach(function(l) {
+      this.getFlatLayers_(l, array);
+    }, this);
+  } else {
+    if (array.indexOf(layer) < 0) {
+      array.push(layer);
+    }
+  }
+  return array;
+};
+
+
+/**
+ * Get a layer that has a `layerName` property equal to a given layer name from
+ * an array of layers. If one of the layers in the array is a group, then the
+ * layers contained in that group are searched as well.
+ * @param {string} layerName The name of the layer we're looking for.
+ * @param {Array.<ol.layer.Base>} layers Layers.
+ * @return {?ol.layer.Base} Layer.
+ * @export
+ */
+ngeo.LayerHelper.prototype.getLayerByName = function(layerName, layers) {
+  var found = null;
+  layers.some(function(layer) {
+    if (layer instanceof ol.layer.Group) {
+      var sublayers = layer.getLayers().getArray();
+      found = this.getLayerByName(layerName, sublayers);
+    } else if (layer.get('layerNodeName') === layerName) {
+      found = layer;
+    }
+    return !!found;
+  }, this);
+
+  return found;
+};
+
+
+/**
+ * Get the WMTS legend URL for the given layer.
+ * @param {ol.layer.Tile} layer Tile layer as returned by the
+ * ngeo layerHelper service.
+ * @return {string|undefined} The legend URL or undefined.
+ * @export
+ */
+ngeo.LayerHelper.prototype.getWMTSLegendURL = function(layer) {
+  // FIXME case of multiple styles ?  case of multiple legendUrl ?
+  var url;
+  var styles = layer.get('capabilitiesStyles');
+  if (styles !== undefined) {
+    var legendURL = styles[0]['legendURL'];
+    if (legendURL !== undefined) {
+      url = legendURL[0]['href'];
+    }
+  }
+  return url;
+};
+
+
+/**
+ * Get the WMS legend URL for the given node.
+ * @param {string} url The base url of the wms service.
+ * @param {string} layerName The name of a wms layer.
+ * @param {number=} opt_scale A scale.
+ * @param {string=} opt_legendRule rule parameters to add to the returned URL.
+ * @return {string|undefined} The legend URL or undefined.
+ * @export
+ */
+ngeo.LayerHelper.prototype.getWMSLegendURL = function(url,
+    layerName, opt_scale, opt_legendRule) {
+  if (!url) {
+    return undefined;
+  }
+  url = goog.uri.utils.setParam(url, 'FORMAT', 'image/png');
+  url = goog.uri.utils.setParam(url, 'TRANSPARENT', true);
+  url = goog.uri.utils.setParam(url, 'SERVICE', 'WMS');
+  url = goog.uri.utils.setParam(url, 'VERSION', '1.1.1');
+  url = goog.uri.utils.setParam(url, 'REQUEST', 'GetLegendGraphic');
+  url = goog.uri.utils.setParam(url, 'LAYER', layerName);
+  if (opt_scale !== undefined) {
+    url = goog.uri.utils.setParam(url, 'SCALE', opt_scale);
+  }
+  if (opt_legendRule !== undefined) {
+    url = goog.uri.utils.setParam(url, 'RULE', opt_legendRule);
+  }
+  return url;
+};
+
+
+/**
+ * Returns if this layer is visible at the current resolution.
+ * @param {ol.layer.Base} layer Layer.
+ * @param {ol.Map} map Map.
+ * @return {boolean} Is the layer currently visible?
+ */
+ngeo.LayerHelper.prototype.isLayerVisible = function(layer, map) {
+  if (!layer.getVisible()) {
+    return false;
+  }
+
+  var currentResolution = map.getView().getResolution();
+  return currentResolution > layer.getMinResolution() &&
+      currentResolution < layer.getMaxResolution();
+};
+
+
+/**
+ * Force a WMS layer to refresh using a random value.
+ * @param {ol.layer.Image|ol.layer.Tile} layer Layer to refresh.
+ */
+ngeo.LayerHelper.prototype.refreshWMSLayer = function(layer) {
+  var source_ = layer.getSource();
+  goog.asserts.assert(
+    source_ instanceof ol.source.ImageWMS ||
+    source_ instanceof ol.source.TileWMS
+  );
+  var source = /** @type{ol.source.ImageWMS|ol.source.TileWMS} */ (source_);
+  var params = source.getParams();
+  params[ngeo.LayerHelper.REFRESH_PARAM] = Math.random();
+  source.updateParams(params);
+};
+
+
+/**
+ * Update the LAYERS parameter of the source of the given WMS layer.
+ * @param {ol.layer.Image} layer The WMS layer.
+ * @param {string} names The names that will be used to set
+ * the LAYERS parameter.
+ * @param {string=} opt_time The start
+ * and optionally the end datetime (for time range selection) selected by user
+ * in a ISO-8601 string datetime or time interval format
+ * @export
+ */
+ngeo.LayerHelper.prototype.updateWMSLayerState = function(layer,
+    names, opt_time) {
+  // Don't send layer without parameters, hide layer instead;
+  if (names.length <= 0) {
+    layer.setVisible(false);
+  } else {
+    layer.setVisible(true);
+    var source = /** @type {ol.source.ImageWMS} */ (layer.getSource());
+    if (opt_time) {
+      source.updateParams({'LAYERS': names, 'TIME': opt_time});
+    } else {
+      source.updateParams({'LAYERS': names});
+    }
+  }
+};
+
+
+ngeo.module.service('ngeoLayerHelper', ngeo.LayerHelper);
+
+goog.provide('ngeo.Query');
+
+goog.require('ngeo');
+goog.require('ngeo.LayerHelper');
+goog.require('ol.format.WFS');
+goog.require('ol.format.WMSGetFeatureInfo');
+goog.require('ol.obj');
+goog.require('ol.source.ImageWMS');
+goog.require('ol.source.TileWMS');
+goog.require('goog.uri.utils');
+
+
+/**
+ * @enum {string}
+ */
+ngeo.QueryInfoFormatType = {
+  GML: 'application/vnd.ogc.gml'
+};
+
+
+/**
+ * @typedef {{
+ *     resultSource: (ngeox.QueryResultSource),
+ *     source: (ngeox.QuerySource)
+ * }}
+ */
+ngeo.QueryCacheItem;
+
+
+/**
+ * @typedef {{
+ *     wms: (Object.<string, Array.<ngeo.QueryCacheItem>>),
+ *     wfs: (Object.<string, Array.<ngeo.QueryCacheItem>>)
+ * }}
+ */
+ngeo.QueryableSources;
+
+
+/**
+ * The `ngeoQueryResult` is the value service where the features of the query
+ * result are added.
+ */
+ngeo.module.value('ngeoQueryResult', /** @type {ngeox.QueryResult} */ ({
+  sources: [],
+  total: 0,
+  pending: false
+}));
+
+
+/**
+ * The Query service provides a way to send WMS GetFeatureInfo and WFS GetFeature
+ * requests from visible layer objects within a map. Those do not necessarily need to have
+ * a WMS source. The Query service requires source configuration in order
+ * for layers to actually be considered queryable.
+ *
+ * To know more about the specification of a source configuration, see
+ * `ngeox.QuerySource`
+ *
+ * @constructor
+ * @struct
+ * @param {angular.$http} $http Angular $http service.
+ * @param {angular.$q} $q The Angular $q service.
+ * @param {ngeox.QueryResult} ngeoQueryResult The ngeo query result service.
+ * @param {ngeox.QueryOptions|undefined} ngeoQueryOptions The options to
+ *     configure the ngeo query service with.
+ * @param {ngeo.LayerHelper} ngeoLayerHelper Ngeo Layer Helper.
+ * @ngdoc service
+ * @ngname ngeoQuery
+ * @ngInject
+ */
+ngeo.Query = function($http, $q, ngeoQueryResult, ngeoQueryOptions,
+    ngeoLayerHelper) {
+
+  var options = ngeoQueryOptions !== undefined ? ngeoQueryOptions : {};
+
+
+  /**
+   * @type {Object.<string, string>}
+   */
+  this.dimensions = {};
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.limit_ = options.limit !== undefined ? options.limit : 50;
+
+  /**
+   * @type {boolean}
+   * @private
+   */
+  this.queryCountFirst_ = options.queryCountFirst !== undefined ?
+      options.queryCountFirst : false;
+
+  /**
+   * @type {string}
+   * @private
+   */
+  this.sourceIdsProperty_ = options.sourceIdsProperty !== undefined ?
+      options.sourceIdsProperty : ngeo.Query.DEFAULT_SOURCE_IDS_PROPERTY_;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.tolerancePx_ = options.tolerance !== undefined ?
+      options.tolerance : 3;
+
+  /**
+   * @type {string}
+   * @private
+   */
+  this.featureNS_ = options.featureNS !== undefined ?
+      options.featureNS : 'http://mapserver.gis.umn.edu/mapserver';
+
+  /**
+   * @type {string}
+   * @private
+   */
+  this.featurePrefix_ = options.featurePrefix !== undefined ?
+      options.featurePrefix : 'feature';
+
+  /**
+   * @type {string}
+   * @private
+   */
+  this.geometryName_ = options.geometryName !== undefined ?
+      options.geometryName : 'the_geom';
+
+  /**
+   * @type {ngeo.LayerHelper}
+   * @private
+   */
+  this.ngeoLayerHelper_ = ngeoLayerHelper;
+
+  /**
+   * @type {angular.$http}
+   * @private
+   */
+  this.$http_ = $http;
+
+  /**
+   * @type {angular.$q}
+   * @private
+   */
+  this.$q_ = $q;
+
+  /**
+   * @type {ngeox.QueryResult}
+   * @private
+   */
+  this.result_ = ngeoQueryResult;
+
+  /**
+   * @type {Array.<ngeox.QuerySource>}
+   * @private
+   */
+  this.sources_ = [];
+
+  /**
+   * @type {Object.<number|string, ngeo.QueryCacheItem>}
+   * @private
+   */
+  this.cache_ = {};
+
+  /**
+   * Promises that can be resolved to cancel started requests.
+   * @type {Array.<angular.$q.Deferred>}
+   * @private
+   */
+  this.requestCancelers_ = [];
+};
+
+
+/**
+ * @const
+ * @private
+ */
+ngeo.Query.DEFAULT_SOURCE_IDS_PROPERTY_ = 'querySourceIds';
+
+
+/**
+ * Adds a new source to the query service.
+ *
+ * A source must at least have an `id` configured.  That id is then used to
+ * associate the corresponding layer object within a map.
+ *
+ * A source will require a `ol.source.ImageWMS` or `ol.source.TileWMS` object.
+ * You can either set it directly in the config, or use the one from a given
+ * layer or let the query service create one for you using other source config
+ * such as `url` and `params`.
+ *
+ * A source can be set with either a `format` and/or `infoFormat`, which will
+ * determine how the returned features of a query will be read.
+ *
+ * This method will also create a result entry in the `ngeoQueryResult`
+ * value service.
+ *
+ * @param {ngeox.QuerySource} source The source to add to the query service.
+ * @export
+ */
+ngeo.Query.prototype.addSource = function(source) {
+  var sourceId = source.id;
+
+  goog.asserts.assert(sourceId, 'source.id should be thruthy');
+  goog.asserts.assert(!this.cache_[sourceId],
+      'no other source with the same id should be present');
+
+  // == wmsSource ==
+  // if the source doesn't have a wmsSource property set, it must at least have
+  // a layer that has one or have the required configuration options in order
+  // to create one.
+  if (!source.wmsSource) {
+    if (source.layer &&
+        (source.layer instanceof ol.layer.Image ||
+         source.layer instanceof ol.layer.Tile)) {
+      var wmsSource = source.layer.getSource();
+      if (wmsSource &&
+          (wmsSource instanceof ol.source.ImageWMS ||
+           wmsSource instanceof ol.source.TileWMS)) {
+        source.wmsSource =
+            /** @type {ol.source.ImageWMS|ol.source.TileWMS} */ (wmsSource);
+      }
+    } else {
+      var url = source.url;
+      var params = source.params;
+      goog.asserts.assert(url,
+          'url must be set when no layer or wmsSource is set in the source');
+      goog.asserts.assert(params,
+          'parmas must be set when no layer or wmsSource is set in the source');
+      source.wmsSource = new ol.source.ImageWMS({
+        url: url,
+        params: params
+      });
+    }
+  }
+  goog.asserts.assert(source.wmsSource, 'wmsSource should be thruthy');
+
+  // == format ==
+  if (!source.format) {
+    // GML is the default infoFormat if the source doesn't have one defined
+    if (!source.infoFormat) {
+      source.infoFormat = ngeo.QueryInfoFormatType.GML;
+    }
+
+    var layers = source.wmsSource.getParams()['LAYERS'].split(',');
+
+    if (source.infoFormat === ngeo.QueryInfoFormatType.GML) {
+      source.format = new ol.format.WMSGetFeatureInfo({
+        layers: layers
+      });
+    }
+  } else if (!source.infoFormat) {
+    // == infoFormat ==
+    var format = source.format;
+    if (format instanceof ol.format.WMSGetFeatureInfo) {
+      source.infoFormat = ngeo.QueryInfoFormatType.GML;
+    }
+  }
+  goog.asserts.assert(source.format, 'format should be thruthy');
+
+  this.sources_.push(source);
+
+  var sourceLabel = source.label !== undefined ? source.label : sourceId;
+
+  var sourceIdentifierAttributeField =
+      source.identifierAttributeField !== undefined ?
+      source.identifierAttributeField : sourceId;
+
+  var resultSource = /** @type {ngeox.QueryResultSource} */ ({
+    'features': [],
+    'id': sourceId,
+    'identifierAttributeField': sourceIdentifierAttributeField,
+    'label': sourceLabel,
+    'pending': false,
+    'queried': false
+  });
+
+  this.result_.sources.push(resultSource);
+
+  var cacheItem = {
+    'source': source,
+    'resultSource': resultSource
+  };
+  this.cache_[sourceId] = cacheItem;
+};
+
+
+/**
+ * Add multiple sources at once in the order they are given.
+ * @param {Array.<ngeox.QuerySource>} sources The sources to add to the query
+ *     service.
+ * @export
+ */
+ngeo.Query.prototype.addSources = function(sources) {
+  sources.forEach(this.addSource, this);
+};
+
+
+/**
+ * Clear the results.
+ * @export
+ */
+ngeo.Query.prototype.clear = function() {
+  this.clearResult_();
+};
+
+
+/**
+ * Remove all sources.
+ * @export
+ */
+ngeo.Query.prototype.removeAllSources = function() {
+  this.result_.sources.length = 0;
+  this.sources_.length = 0;
+  this.cache_ = {};
+};
+
+
+/**
+ * Issue a new request using a given map and a given object, which can be
+ * a coordinate or extent.
+ *
+ * When given a coordinate, WMS GetFeatureInfo or WFS GetFeature requests will
+ * be made. If a layer supports WFS, a GetFeature request with a bbox around the
+ * coordinate are issued.
+ *
+ * For an extent, WFS GetFeature is used.
+ *
+ * @param {ol.Map} map The ol3 map object to fetch the layers from.
+ * @param {ol.Coordinate|ol.Extent} object The coordinate or extent to issue
+ *     the request with.
+ * @export
+ */
+ngeo.Query.prototype.issue = function(map, object) {
+  this.cancelStillRunningRequests_();
+  this.clearResult_();
+
+  if (object.length === 2) {
+    this.issueIdentifyFeaturesRequests_(map, object);
+  } else {
+    goog.asserts.assert(object.length === 4, 'expecting extent');
+    this.issueGetFeatureRequests_(map, object);
+  }
+};
+
+
+/**
+ * Issue WMS GetFeatureInfo or WFS GetFeature requests using the given
+ * coordinate and map.
+ * For each visible layer of the map, if that layer has a source configured
+ * within this query service, then a query will be sent and the results
+ * will be stocked in the `ngeoQueryResult`.
+ *
+ * For WMS GetFeatureInfo, gf multiple sources share the same url and use GML
+ * as info format, then only one request will be sent for all these sources.
+ *
+ * NOTE: Only GML info format are currently supported.
+ *
+ * @param {ol.Map} map The ol3 map object to fetch the layers from.
+ * @param {ol.Coordinate} coordinate The coordinate to issue the request with.
+ * @private
+ */
+ngeo.Query.prototype.issueIdentifyFeaturesRequests_ = function(map, coordinate) {
+  var sources = this.getQueryableSources_(map, false);
+
+  this.doGetFeatureInfoRequests_(sources.wms, coordinate, map);
+  this.doGetFeatureRequestsWithCoordinate_(sources.wfs, coordinate, map);
+  this.updatePendingState_();
+};
+
+
+/**
+ * Issue WFS GetFeature requests using the given extent for each visible layer
+ * of the map.
+ *
+ * @param {ol.Map} map The ol3 map object to fetch the layers from.
+ * @param {ol.Extent} extent The coordinate to issue the request with.
+ * @private
+ */
+ngeo.Query.prototype.issueGetFeatureRequests_ = function(map, extent) {
+  var sources = this.getQueryableSources_(map, true);
+  this.doGetFeatureRequests_(sources.wfs, extent, map);
+  this.updatePendingState_();
+};
+
+
+/**
+ * @param {ol.Map} map Map.
+ * @param {boolean} wfsOnly Only get sources queryable via WFS.
+ * @return {ngeo.QueryableSources} Queryable sources.
+ * @private
+ */
+ngeo.Query.prototype.getQueryableSources_ = function(map, wfsOnly) {
+
+  var wmsItemsByUrl =
+      /** @type {Object.<string, Array.<ngeo.QueryCacheItem>>} */ ({});
+  var wfsItemsByUrl =
+      /** @type {Object.<string, Array.<ngeo.QueryCacheItem>>} */ ({});
+
+  var layers = this.ngeoLayerHelper_.getFlatLayers(map.getLayerGroup());
+
+  layers.forEach(function(layer) {
+
+    // Skip layers that are not visible
+    if (!this.ngeoLayerHelper_.isLayerVisible(layer, map)) {
+      return;
+    }
+
+    // Skip layers that don't have one or more sources configured
+    var ids = this.getLayerSourceIds_(layer);
+    if (ids.length === 0) {
+      return;
+    }
+
+    var infoFormat;
+    var url;
+    var item;
+    for (var i = 0, len = ids.length; i < len; i++) {
+      var id = ids[i];
+      item = this.cache_[id];
+      if (!item) {
+        continue;
+      }
+
+      // If `validateLayerParams` is set, then the source config layer in the
+      // LAYERS params must be in the current LAYERS params of the layer
+      // wms source object.
+      if (item.source.validateLayerParams) {
+        goog.asserts.assert(
+            layer instanceof ol.layer.Image ||
+            layer instanceof ol.layer.Tile,
+            'The layer should be an Image or Tile when using the ' +
+            'validateLayerParams option.'
+        );
+        var layerSource = layer.getSource();
+        goog.asserts.assert(
+            layerSource instanceof ol.source.ImageWMS ||
+            layerSource instanceof ol.source.TileWMS,
+            'The layer source should be a WMS one when using the ' +
+            'validateLayerParams option.'
+        );
+        var layerLayers = layerSource.getParams()['LAYERS'].split(',');
+        var cfgLayer = item.source.layers.split(',');
+
+        var layerIsOnTheMap = cfgLayer.some(function(layer) {
+          return layerLayers.indexOf(layer) > -1;
+        });
+        if (!layerIsOnTheMap) {
+          continue;
+        }
+      }
+
+      if (item.source.wfsQuery) {
+        // use WFS GetFeature
+        url = item.source.urlWfs || item.source.wmsSource.getUrl();
+        goog.asserts.assertString(url);
+        if (!wfsItemsByUrl[url]) {
+          wfsItemsByUrl[url] = [];
+        }
+        this.pushSourceIfUnique_(item, wfsItemsByUrl[url]);
+      } else if (!wfsOnly) {
+        // use WMF GetFeatureInfo
+        infoFormat = item.source.infoFormat;
+
+        // Sources that use GML as info format are combined together if they
+        // share the same server url
+        if (infoFormat === ngeo.QueryInfoFormatType.GML) {
+          url = item.source.wmsSource.getUrl();
+          goog.asserts.assertString(url);
+          if (!wmsItemsByUrl[url]) {
+            wmsItemsByUrl[url] = [];
+          }
+          this.pushSourceIfUnique_(item, wmsItemsByUrl[url]);
+        } else {
+          // TODO - support other kinds of infoFormats
+        }
+      }
+    }
+  }, this);
+
+  return {
+    wms: wmsItemsByUrl,
+    wfs: wfsItemsByUrl
+  };
+};
+
+
+/**
+ * Push source if and only if not already in the array. it aims to add a unicity
+ * constraint on sources.
+ *
+ * The 'id' of a source object is taken from the 'id' property of the
+ * node object (in the tree). Under the wood, the 'id' property of a node is filled
+ * regarding the layer attached to it. therefore, Two nodes with the same layer ,
+ * attached will have the same 'id'. We must avoid multiple identical request.
+ * @param  {ngeo.QueryCacheItem} item  The QueryCache item to push in the array
+ * @param  {Array.<ngeo.QueryCacheItem>} array QueryCacheItem array
+ * @return {boolean} true if the item has been added, false otherwise.
+ * @private
+ */
+ngeo.Query.prototype.pushSourceIfUnique_ = function(item, array) {
+  var isUnique = array.indexOf(item) < 0;
+  if (isUnique) {
+    array.push(item);
+  }
+  return isUnique;
+};
+
+/**
+ * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wmsItemsByUrl Queryable
+ *    layers for GetFeatureInfo
+ * @param {ol.Coordinate} coordinate Query coordinate
+ * @param {ol.Map} map Map
+ * @private
+ */
+ngeo.Query.prototype.doGetFeatureInfoRequests_ = function(
+    wmsItemsByUrl, coordinate, map) {
+  var view = map.getView();
+  var projCode = view.getProjection().getCode();
+  var resolution = /** @type {number} */(view.getResolution());
+
+  angular.forEach(wmsItemsByUrl, function(items) {
+
+    items.forEach(function(item) {
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
+    });
+
+    var infoFormat = items[0].source.infoFormat;
+    var wmsGetFeatureInfoUrl = items[0].source.wmsSource.getGetFeatureInfoUrl(
+        coordinate, resolution, projCode, {
+          'INFO_FORMAT': infoFormat,
+          'FEATURE_COUNT': this.limit_
+        });
+
+    goog.asserts.assert(
+        wmsGetFeatureInfoUrl, 'WMS GetFeatureInfo url should be thruty');
+
+    var layers = this.getLayersForItems_(items);
+    var lyrStr = layers.join(',');
+
+    wmsGetFeatureInfoUrl =
+        goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'LAYERS', lyrStr);
+    wmsGetFeatureInfoUrl =
+        goog.uri.utils.setParam(wmsGetFeatureInfoUrl, 'QUERY_LAYERS', lyrStr);
+
+    // add dimensions values
+    var dimensions = items[0].source.dimensions;
+    if (dimensions) {
+      for (var key in dimensions) {
+        // get the value from the global dimensions
+        var value = this.dimensions[key];
+        if (value === undefined) {
+          // get the value from the layer default value
+          value = dimensions[key];
+        }
+        if (value !== undefined) {
+          wmsGetFeatureInfoUrl = goog.uri.utils.setParam(wmsGetFeatureInfoUrl, key, value);
+        }
+      }
+    }
+
+    var canceler = this.registerCanceler_();
+    this.$http_.get(wmsGetFeatureInfoUrl, {timeout: canceler.promise})
+        .then(function(items, response) {
+          items.forEach(function(item) {
+            item['resultSource'].pending = false;
+            var format = item.source.format;
+            var features = format.readFeatures(response.data);
+            this.setUniqueIds_(features, item.source.id);
+            item['resultSource'].features = features;
+            this.result_.total += features.length;
+          }, this);
+          this.updatePendingState_();
+        }.bind(this, items));
+  }, this);
+};
+
+
+/**
+ * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wfsItemsByUrl Queryable
+ *    layers for GetFeature
+ * @param {ol.Coordinate} coordinate Query coordinate
+ * @param {ol.Map} map Map
+ * @private
+ */
+ngeo.Query.prototype.doGetFeatureRequestsWithCoordinate_ = function(
+    wfsItemsByUrl, coordinate, map) {
+  var view = map.getView();
+  var bbox = this.getQueryBbox_(coordinate, view);
+  this.doGetFeatureRequests_(wfsItemsByUrl, bbox, map);
+};
+
+
+/**
+ * @param {Object.<string, Array.<ngeo.QueryCacheItem>>} wfsItemsByUrl Queryable
+ *    layers for GetFeature
+ * @param {ol.Extent} bbox Query bbox
+ * @param {ol.Map} map Map
+ * @private
+ */
+ngeo.Query.prototype.doGetFeatureRequests_ = function(
+    wfsItemsByUrl, bbox, map) {
+  var view = map.getView();
+  var projCode = view.getProjection().getCode();
+  var wfsFormat = new ol.format.WFS();
+  var xmlSerializer = new XMLSerializer();
+
+  angular.forEach(wfsItemsByUrl, function(items, url) {
+    items.forEach(function(item) {
+      var layers = this.getLayersForItem_(item);
+
+      if (layers.length == 0 || layers[0] === '') {
+        // do not query source if no valid layers
+        return;
+      }
+
+      item['resultSource'].pending = true;
+      item['resultSource'].queried = true;
+
+      /** @type{olx.format.WFSWriteGetFeatureOptions} */
+      var getFeatureOptions = {
+        srsName: projCode,
+        featureNS: this.featureNS_,
+        featurePrefix: this.featurePrefix_,
+        featureTypes: layers,
+        outputFormat: 'GML3',
+        bbox: bbox,
+        geometryName: this.geometryName_
+      };
+
+      var sourceFormat = new ol.format.WFS({
+        featureType: layers,
+        featureNS: this.featureNS_
+      });
+
+      var getFeatures = function() {
+        /** @type{olx.format.WFSWriteGetFeatureOptions} */
+        var options = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.obj.assign({
+          maxFeatures: this.limit_
+        }, getFeatureOptions));
+        var featureRequestXml = wfsFormat.writeGetFeature(options);
+        var featureRequest = xmlSerializer.serializeToString(featureRequestXml);
+
+        var canceler = this.registerCanceler_();
+        this.$http_.post(url, featureRequest, {timeout: canceler.promise})
+            .then(function(response) {
+              item['resultSource'].pending = false;
+              var features = sourceFormat.readFeatures(response.data);
+              this.setUniqueIds_(features, item.source.id);
+              item['resultSource'].features = features;
+              this.result_.total += features.length;
+              this.updatePendingState_();
+            }.bind(this));
+      }.bind(this);
+
+      if (this.queryCountFirst_) {
+        var getCountOptions = /** @type{olx.format.WFSWriteGetFeatureOptions} */ (ol.obj.assign({
+          resultType: 'hits'
+        }, getFeatureOptions));
+        var featureCountXml = wfsFormat.writeGetFeature(getCountOptions);
+        var featureCountRequest = xmlSerializer.serializeToString(featureCountXml);
+
+        var canceler = this.registerCanceler_();
+        this.$http_.post(url, featureCountRequest, {timeout: canceler.promise})
+            .then(function(response) {
+              var meta = sourceFormat.readFeatureCollectionMetadata(response.data);
+              if (meta['numberOfFeatures'] > this.limit_) {
+                item['resultSource'].pending = false;
+                item['resultSource'].features = [];
+                item['resultSource'].tooManyResults = true;
+                item['resultSource'].totalFeatureCount = meta['numberOfFeatures'];
+                this.updatePendingState_();
+              } else {
+                getFeatures();
+              }
+            }.bind(this));
+      } else {
+        getFeatures();
+      }
+    }.bind(this));
+  }.bind(this));
+};
+
+/**
+ * Clear every features for all result sources and reset the total counter
+ * as well.
+ * @private
+ */
+ngeo.Query.prototype.clearResult_ = function() {
+  this.result_.total = 0;
+  this.result_.sources.forEach(function(source) {
+    source.features.length = 0;
+    source.pending = false;
+    source.queried = false;
+    source.tooManyResults = false;
+    source.totalFeatureCount = undefined;
+  }, this);
+  this.result_.pending = false;
+};
+
+
+/**
+ * Returns the source ids from an ol3 layer object.
+ * @param {ol.layer.Base} layer The ol3 layer object.
+ * @return {Array.<number|string>} ids The ids of the sources bound to that
+ *     layer.
+ * @private
+ */
+ngeo.Query.prototype.getLayerSourceIds_ = function(layer) {
+  var ids = layer.get(this.sourceIdsProperty_) || [];
+  goog.asserts.assertArray(ids);
+  var clone = ids.slice();
+  return clone;
+};
+
+
+/**
+ * @param {ngeo.QueryCacheItem} item Cache item
+ * @return {Array.<string>} Layer names
+ * @private
+ */
+ngeo.Query.prototype.getLayersForItem_ = function(item) {
+  return item.source.wmsSource.getParams()['LAYERS'].split(',');
+};
+
+
+/**
+ * @param {Array.<ngeo.QueryCacheItem>} items Cache items
+ * @return {Array.<string>} Layer names
+ * @private
+ */
+ngeo.Query.prototype.getLayersForItems_ = function(items) {
+  var layers = this.getLayersForItem_(items[0]);
+  for (var i = 1, len = items.length; i < len; i++) {
+    layers = layers.concat(this.getLayersForItem_(items[i]));
+  }
+  return layers;
+};
+
+
+/**
+ * Make sure that feature ids are unique, because the same features might
+ * be returned for different layers.
+ * @param {Array.<ol.Feature>} features Features
+ * @param {string|number} sourceId Source id.
+ * @private
+ */
+ngeo.Query.prototype.setUniqueIds_ = function(features, sourceId) {
+  features.forEach(function(feature) {
+    if (feature.getId() !== undefined) {
+      var id = sourceId + '_' + feature.getId();
+      feature.setId(id);
+    }
+  });
+};
+
+
+/**
+ * Construct a bbox around a coordinate with a tolerance relative to the
+ * current resolution.
+ * @param {ol.Coordinate} coordinate Coordinate
+ * @param {ol.View} view View
+ * @return {ol.Extent} Bbox
+ * @private
+ */
+ngeo.Query.prototype.getQueryBbox_ = function(coordinate, view) {
+  var tolerance = this.tolerancePx_ * view.getResolution();
+
+  return ol.extent.buffer(
+      ol.extent.createOrUpdateFromCoordinate(coordinate),
+      tolerance);
+};
+
+
+/**
+ * @return {angular.$q.Deferred} A deferred that can be resolved to cancel a
+ *    HTTP request.
+ * @private
+ */
+ngeo.Query.prototype.registerCanceler_ = function() {
+  var canceler = this.$q_.defer();
+  this.requestCancelers_.push(canceler);
+  return canceler;
+};
+
+
+/**
+ * @private
+ */
+ngeo.Query.prototype.cancelStillRunningRequests_ = function() {
+  this.requestCancelers_.forEach(function(canceler) {
+    canceler.resolve();
+  });
+  this.requestCancelers_.length = 0;
+};
+
+
+ngeo.Query.prototype.updatePendingState_ = function() {
+  var pendingSources = 0;
+  this.result_.sources.forEach(function(source) {
+    if (source.pending) {
+      pendingSources++;
+    }
+  });
+  this.result_.pending = pendingSources > 0;
+};
+
+
+/**
+ * @returns {number} The maximum number of features that are requested.
+ * @public
+ */
+ngeo.Query.prototype.getLimit = function() {
+  return this.limit_;
+};
+
+
+ngeo.module.service('ngeoQuery', ngeo.Query);
+
+goog.provide('ngeo.bboxQueryDirective');
+
+goog.require('ngeo');
+goog.require('ngeo.Query');
+goog.require('ol.interaction.DragBox');
+
+
+/**
+ * Provides a "bbox query" directive.
+ *
+ * This directive is responsible of binding a map and the ngeo query service
+ * together. While active, drawing a bbox while CTRL or the 'meta' key is pressed
+ * issues a request to the query service.
+ *
+ * This directive doesn't require to be rendered in a visible DOM element, but
+ * it could be used with a ngeo-btn to manage the activation of the directive.
+ * See below an example without any use of UI:
+ *
+ * Example:
+ *
+ *      <span
+ *        ngeo-bbox-query=""
+ *        ngeo-bbox-query-map="::ctrl.map"
+ *        ngeo-bbox-query-active="ctrl.queryActive">
+ *        ngeo-bbox-query-autoclear="ctrl.queryAutoClear">
+ *      </span>
+ *
+ * See the live example: [../examples/bboxquery.html](../examples/bboxquery.html)
+ *
+ * @param {ngeo.Query} ngeoQuery The ngeo Query service.
+ * @return {angular.Directive} The Directive Definition Object.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoBboxQuery
+ */
+ngeo.bboxQueryDirective = function(ngeoQuery) {
+  return {
+    restrict: 'A',
+    scope: false,
+    link: function(scope, elem, attrs) {
+      /**
+       * @type {ol.Map}
+       */
+      var map = scope.$eval(attrs['ngeoBboxQueryMap']);
+
+      var interaction = new ol.interaction.DragBox({
+        condition: ol.events.condition.platformModifierKeyOnly
+      });
+
+      /**
+       * Called when a bbox is drawn while this controller is active. Issue
+       * a request to the query service using the extent that was drawn.
+       * @param {ol.interaction.DragBox.Event} evt Event.
+       */
+      var handleBoxEnd = function(evt) {
+        var extent = interaction.getGeometry().getExtent();
+        ngeoQuery.issue(map, extent);
+      };
+      interaction.on('boxend', handleBoxEnd);
+
+      // watch 'active' property -> activate/deactivate accordingly
+      scope.$watch(attrs['ngeoBboxQueryActive'],
+          function(newVal, oldVal) {
+            if (newVal) {
+              // activate
+              map.addInteraction(interaction);
+            } else {
+              // deactivate
+              map.removeInteraction(interaction);
+              if (scope.$eval(attrs['ngeoBboxQueryAutoclear']) !== false) {
+                ngeoQuery.clear();
+              }
+            }
+          }
+      );
+    }
+  };
+};
+
+ngeo.module.directive('ngeoBboxQuery', ngeo.bboxQueryDirective);
+
+goog.provide('ngeo.BtnGroupController');
+goog.provide('ngeo.btnDirective');
+goog.provide('ngeo.btngroupDirective');
+
+goog.require('ngeo');
+
+
+/**
+ * Provides two directives: ngeo-btn-group and ngeo-btn.
+ *
+ * The ngeo-btn-group directive allows creating "toggle" groups. It works with
+ * the ngeo-btn directive.
+ *
+ * Example:
+ *
+ *     <div ngeo-btn-group>
+ *       <button ngeo-btn class="btn" ng-model="ctrl.drawPoint.active"></button>
+ *       <button ngeo-btn class="btn" ng-model="ctrl.drawLine.active"></button>
+ *     </div>
+ *
+ * In that example the ngeo-btn are combined together in a "toggle group",
+ * where activating a button will deactivate the others.
+ *
+ * One can use `ng-model` directive at the group level in order to know if
+ * a button is active.
+ *
+ * Example:
+ *
+ *     <div ngeo-btn-group ngeo-btn-group-active="ctrl.drawToolActive">
+ *
+ * See our live example: [../examples/interactionbtngroup.html](../examples/interactionbtngroup.html)
+ *
+ * @htmlAttribute {*} ngeo-btn-group-active Any property of the scope.
+ * Tells whether at least one button of the group is active.
+ * @param {angular.$parse} $parse Angular parse service.
+ * @return {angular.Directive} The directive specs.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoBtnGroup
+ */
+ngeo.btngroupDirective = function($parse) {
+  return {
+    restrict: 'A',
+    controller: 'ngeoBtnGroupController',
+    link:
+        /**
+         * @param {!angular.Scope} scope Scope.
+         * @param {angular.JQLite} element Element.
+         * @param {angular.Attributes} attrs Attributes.
+         * @param {!Object} controller Controller.
+         */
+        function(scope, element, attrs, controller) {
+          var setActive = $parse(attrs['ngeoBtnGroupActive']).assign;
+
+          if (setActive) {
+            scope.$watch(function() {
+              // return true if at least one button is active otherwise false
+              return controller.buttons_.some(function(buttonModel) {
+                return (buttonModel(scope) === true);
+              });
+            }, function(newValue) {
+              setActive(scope, newValue);
+            });
+          }
+        }
+  };
+};
+
+
+ngeo.module.directive('ngeoBtnGroup', ngeo.btngroupDirective);
+
+
+/**
+ * @param {!angular.Scope} $scope Scope.
+ * @constructor
+ * @struct
+ * @ngInject
+ * @ngdoc controller
+ * @ngname ngeoBtnGroupController
+ */
+ngeo.BtnGroupController = function($scope) {
+  /**
+   * @type {Array.<angular.$parse.Expression>}
+   * @private
+   */
+  this.buttons_ = [];
+
+  /**
+   * @type {!angular.Scope}
+   * @private
+   */
+  this.scope_ = $scope;
+};
+
+
+/**
+ * @param {number} index Index of the button in buttons array.
+ */
+ngeo.BtnGroupController.prototype.activate = function(index) {
+  this.buttons_.forEach(function(expressionFn, i) {
+    if (i != index) {
+      expressionFn.assign(this.scope_, false);
+    }
+  }, this);
+};
+
+
+/**
+ * @param {angular.$parse.Expression} expressionFn Expression function.
+ * @return {number} Index of the pushed setter.
+ */
+ngeo.BtnGroupController.prototype.addButton = function(expressionFn) {
+  this.buttons_.push(expressionFn);
+  return this.buttons_.length - 1;
+};
+
+
+ngeo.module.controller('ngeoBtnGroupController', ngeo.BtnGroupController);
+
+
+/**
+ * The ngeo-btn allows creating toggle buttons working with ng-model. It is
+ * typically used with Bootstrap buttons (`btn`).
+ *
+ * Example:
+ *
+ *     <button ngeo-btn class="btn" ng-model="ctrl.interaction.active"></button>
+ *
+ * This example is about creating a Bootstrap button that can pressed/depressed
+ * to activate/deactivate an OpenLayers 3 interaction.
+ *
+ * @htmlAttribute {*} ng-model Any property on the scope. Ideally a boolean.
+ * @param {angular.$parse} $parse Angular parse service.
+ * @return {angular.Directive} The directive specs.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoBtn
+ */
+ngeo.btnDirective = function($parse) {
+  return {
+    require: ['?^ngeoBtnGroup', 'ngModel'],
+    restrict: 'A',
+    link:
+        /**
+         * @param {!angular.Scope} scope Scope.
+         * @param {angular.JQLite} element Element.
+         * @param {angular.Attributes} attrs Attributes.
+         * @param {!Array.<!Object>} ctrls Controllers.
+         */
+        function(scope, element, attrs, ctrls) {
+          var buttonsCtrl = ctrls[0];
+          var ngModelCtrl = ctrls[1];
+          var indexInGroup = -1;
+
+          var ngModelGet = $parse(attrs['ngModel']);
+          var ngModelSet = ngModelGet.assign;
+
+          // Set ng-model value to false if undefined
+          if (ngModelGet(scope) === undefined) {
+            ngModelSet(scope, false);
+          }
+          if (buttonsCtrl !== null) {
+            indexInGroup = buttonsCtrl.addButton(ngModelGet);
+          }
+
+          // UI -> model
+          element.bind('click', function() {
+            scope.$apply(function() {
+              ngModelCtrl.$setViewValue(!ngModelCtrl.$viewValue);
+              ngModelCtrl.$render();
+            });
+          });
+
+          // model -> UI
+          ngModelCtrl.$render = function() {
+            if (ngModelCtrl.$viewValue && buttonsCtrl !== null) {
+              buttonsCtrl.activate(indexInGroup);
+            }
+            element.toggleClass('active', ngModelCtrl.$viewValue);
+          };
+        }
+  };
+};
+
+
+ngeo.module.directive('ngeoBtn', ngeo.btnDirective);
+
+goog.provide('ngeo.ColorpickerController');
+goog.provide('ngeo.colorpickerDirective');
+
+goog.require('ngeo');
+
+
+ngeo.module.value('ngeoColorpickerTemplateUrl',
+    /**
+     * @param {angular.JQLite} element Element.
+     * @param {angular.Attributes} attrs Attributes.
+     * @return {string} Template URL.
+     */
+    function(element, attrs) {
+      var templateUrl = attrs['ngeoColorpickerTemplateurl'];
+      return templateUrl !== undefined ? templateUrl :
+          ngeo.baseTemplateUrl + '/colorpicker.html';
+    });
+
+/**
+ * Provides the "ngeoColorpicker" directive, a widget for
+ * selecting a color among predefined ones.
+ *
+ * Example:
+ *
+ *     <div ngeo-colorpicker="ctrl.colors">
+ *     </div>
+ *
+ *
+ * @param {string|function(!angular.JQLite=, !angular.Attributes=)}
+ *     ngeoColorpickerTemplateUrl Template URL for the directive.
+ * @return {angular.Directive} Directive Definition Object.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoColorpicker
+ */
+ngeo.colorpickerDirective = function(ngeoColorpickerTemplateUrl) {
+  return {
+    restrict: 'A',
+    scope: {
+      colors: '<?ngeoColorpicker',
+      color: '=?ngeoColorpickerColor'
+    },
+    controller: 'NgeoColorpickerController',
+    controllerAs: 'ctrl',
+    bindToController: true,
+    templateUrl: ngeoColorpickerTemplateUrl
+  };
+};
+
+
+ngeo.module.directive('ngeoColorpicker', ngeo.colorpickerDirective);
+
+/**
+ * @type {Array.<Array.<string>>}
+ * @const
+ */
+var defaultColors = [
+  ['#F4EB37', '#CDDC39', '#62AF44','#009D57','#0BA9CC','#4186F0','#3F5BA9','#7C3592','#A61B4A','#DB4436','#F8971B','#F4B400','#795046'],
+  ['#F9F7A6','#E6EEA3','#B7DBAB','#7CCFA9','#93D7E8','#9FC3FF','#A7B5D7','#C6A4CF','#D698AD','#EE9C96','#FAD199','#FFDD5E','#B29189'],
+  ['#ffffff', '#CCCCCC', '#777', '#000000']
+];
+
+/**
+ * @constructor
+ * @struct
+ * @param {angular.Scope} $scope Directive scope.
+ * @param {angular.JQLite} $element Element.
+ * @param {angular.Attributes} $attrs Attributes.
+ * @export
+ * @ngInject
+ * @ngdoc controller
+ * @ngname NgeoScaleselectorController
+ */
+ngeo.ColorpickerController = function($scope, $element, $attrs) {
+
+  /**
+   * The set of color
+   * @type {Array.<Array.<string>>}
+   * @export
+   */
+  this.colors = defaultColors;
+
+  /**
+   * The selected color
+   * @type {undefined|string}
+   */
+  this.color;
+};
+
+/**
+ * @param {string} color The color to select.
+ * @export
+ */
+ngeo.ColorpickerController.prototype.setColor = function(color) {
+  this.color = color;
+};
+
+
+ngeo.module.controller('NgeoColorpickerController',
+    ngeo.ColorpickerController);
+
+goog.provide('ngeo.controlDirective');
+
+goog.require('goog.asserts');
+goog.require('ngeo');
+goog.require('ol.Map');
+goog.require('ol.control.Control');
+
+
+/**
+ * Provides a directive that can be used to add a control to the map
+ * using a DOM element.
+ *
+ * Example:
+ *
+ *     <div ngeo-control="ctrl.control" ngeo-control-map="ctrl.map"></div>
+ *
+ * The expression passed to "ngeo-control" should evaluate to a control
+ * instance, and the expression passed to "ngeo-control-map" should
+ * evaluate to a map instance.
+ *
+ * See our live example: [../examples/control.html](../examples/control.html)
+ *
+ * @htmlAttribute {ol.Map} ngeo-control-map The map.
+ * @return {angular.Directive} The directive specs.
+ * @ngInject
+ * @ngdoc directive
+ * @ngname ngeoControl
+ */
+ngeo.controlDirective = function() {
+  return {
+    restrict: 'A',
+    link:
+        /**
+         * @param {angular.Scope} scope Scope.
+         * @param {angular.JQLite} element Element.
+         * @param {angular.Attributes} attrs Attributes.
+         */
+        function(scope, element, attrs) {
+
+          var control = /** @type {ol.control.Control} */
+              (scope.$eval(attrs['ngeoControl']));
+          goog.asserts.assertInstanceof(control, ol.control.Control);
+
+          var map = /** @type {ol.Map} */
+              (scope.$eval(attrs['ngeoControlMap']));
+          goog.asserts.assertInstanceof(map, ol.Map);
+
+          control.setTarget(element[0]);
+          map.addControl(control);
+        }
+  };
+};
+
+
+ngeo.module.directive('ngeoControl', ngeo.controlDirective);
+
+// Copyright 2006 The Closure Library Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS-IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @fileoverview Additional mathematical functions.
+ */
+
+goog.provide('goog.math');
+
+goog.require('goog.array');
+goog.require('goog.asserts');
+
+
+/**
+ * Returns a random integer greater than or equal to 0 and less than {@code a}.
+ * @param {number} a  The upper bound for the random integer (exclusive).
+ * @return {number} A random integer N such that 0 <= N < a.
+ */
+goog.math.randomInt = function(a) {
+  return Math.floor(Math.random() * a);
+};
+
+
+/**
+ * Returns a random number greater than or equal to {@code a} and less than
+ * {@code b}.
+ * @param {number} a  The lower bound for the random number (inclusive).
+ * @param {number} b  The upper bound for the random number (exclusive).
+ * @return {number} A random number N such that a <= N < b.
+ */
+goog.math.uniformRandom = function(a, b) {
+  return a + Math.random() * (b - a);
+};
+
+
+/**
+ * Takes a number and clamps it to within the provided bounds.
+ * @param {number} value The input number.
+ * @param {number} min The minimum value to return.
+ * @param {number} max The maximum value to return.
+ * @return {number} The input number if it is within bounds, or the nearest
+ *     number within the bounds.
+ */
+goog.math.clamp = function(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+};
+
+
+/**
+ * The % operator in JavaScript returns the remainder of a / b, but differs from
+ * some other languages in that the result will have the same sign as the
+ * dividend. For example, -1 % 8 == -1, whereas in some other languages
+ * (such as Python) the result would be 7. This function emulates the more
+ * correct modulo behavior, which is useful for certain applications such as
+ * calculating an offset index in a circular list.
+ *
+ * @param {number} a The dividend.
+ * @param {number} b The divisor.
+ * @return {number} a % b where the result is between 0 and b (either 0 <= x < b
+ *     or b < x <= 0, depending on the sign of b).
+ */
+goog.math.modulo = function(a, b) {
+  var r = a % b;
+  // If r and b differ in sign, add b to wrap the result to the correct sign.
+  return (r * b < 0) ? r + b : r;
+};
+
+
+/**
+ * Performs linear interpolation between values a and b. Returns the value
+ * between a and b proportional to x (when x is between 0 and 1. When x is
+ * outside this range, the return value is a linear extrapolation).
+ * @param {number} a A number.
+ * @param {number} b A number.
+ * @param {number} x The proportion between a and b.
+ * @return {number} The interpolated value between a and b.
+ */
+goog.math.lerp = function(a, b, x) {
+  return a + x * (b - a);
+};
+
+
+/**
+ * Tests whether the two values are equal to each other, within a certain
+ * tolerance to adjust for floating point errors.
+ * @param {number} a A number.
+ * @param {number} b A number.
+ * @param {number=} opt_tolerance Optional tolerance range. Defaults
+ *     to 0.000001. If specified, should be greater than 0.
+ * @return {boolean} Whether {@code a} and {@code b} are nearly equal.
+ */
+goog.math.nearlyEquals = function(a, b, opt_tolerance) {
+  return Math.abs(a - b) <= (opt_tolerance || 0.000001);
+};
+
+
+// TODO(user): Rename to normalizeAngle, retaining old name as deprecated
+// alias.
+/**
+ * Normalizes an angle to be in range [0-360). Angles outside this range will
+ * be normalized to be the equivalent angle with that range.
+ * @param {number} angle Angle in degrees.
+ * @return {number} Standardized angle.
+ */
+goog.math.standardAngle = function(angle) {
+  return goog.math.modulo(angle, 360);
+};
+
+
+/**
+ * Normalizes an angle to be in range [0-2*PI). Angles outside this range will
+ * be normalized to be the equivalent angle with that range.
+ * @param {number} angle Angle in radians.
+ * @return {number} Standardized angle.
+ */
+goog.math.standardAngleInRadians = function(angle) {
+  return goog.math.modulo(angle, 2 * Math.PI);
+};
+
+
+/**
+ * Converts degrees to radians.
+ * @param {number} angleDegrees Angle in degrees.
+ * @return {number} Angle in radians.
+ */
+goog.math.toRadians = function(angleDegrees) {
+  return angleDegrees * Math.PI / 180;
+};
+
+
+/**
+ * Converts radians to degrees.
+ * @param {number} angleRadians Angle in radians.
+ * @return {number} Angle in degrees.
+ */
+goog.math.toDegrees = function(angleRadians) {
+  return angleRadians * 180 / Math.PI;
+};
+
+
+/**
+ * For a given angle and radius, finds the X portion of the offset.
+ * @param {number} degrees Angle in degrees (zero points in +X direction).
+ * @param {number} radius Radius.
+ * @return {number} The x-distance for the angle and radius.
+ */
+goog.math.angleDx = function(degrees, radius) {
+  return radius * Math.cos(goog.math.toRadians(degrees));
+};
+
+
+/**
+ * For a given angle and radius, finds the Y portion of the offset.
+ * @param {number} degrees Angle in degrees (zero points in +X direction).
+ * @param {number} radius Radius.
+ * @return {number} The y-distance for the angle and radius.
+ */
+goog.math.angleDy = function(degrees, radius) {
+  return radius * Math.sin(goog.math.toRadians(degrees));
+};
+
+
+/**
+ * Computes the angle between two points (x1,y1) and (x2,y2).
+ * Angle zero points in the +X direction, 90 degrees points in the +Y
+ * direction (down) and from there we grow clockwise towards 360 degrees.
+ * @param {number} x1 x of first point.
+ * @param {number} y1 y of first point.
+ * @param {number} x2 x of second point.
+ * @param {number} y2 y of second point.
+ * @return {number} Standardized angle in degrees of the vector from
+ *     x1,y1 to x2,y2.
+ */
+goog.math.angle = function(x1, y1, x2, y2) {
+  return goog.math.standardAngle(
+      goog.math.toDegrees(Math.atan2(y2 - y1, x2 - x1)));
+};
+
+
+/**
+ * Computes the difference between startAngle and endAngle (angles in degrees).
+ * @param {number} startAngle  Start angle in degrees.
+ * @param {number} endAngle  End angle in degrees.
+ * @return {number} The number of degrees that when added to
+ *     startAngle will result in endAngle. Positive numbers mean that the
+ *     direction is clockwise. Negative numbers indicate a counter-clockwise
+ *     direction.
+ *     The shortest route (clockwise vs counter-clockwise) between the angles
+ *     is used.
+ *     When the difference is 180 degrees, the function returns 180 (not -180)
+ *     angleDifference(30, 40) is 10, and angleDifference(40, 30) is -10.
+ *     angleDifference(350, 10) is 20, and angleDifference(10, 350) is -20.
+ */
+goog.math.angleDifference = function(startAngle, endAngle) {
+  var d =
+      goog.math.standardAngle(endAngle) - goog.math.standardAngle(startAngle);
+  if (d > 180) {
+    d = d - 360;
+  } else if (d <= -180) {
+    d = 360 + d;
+  }
+  return d;
+};
+
+
+/**
+ * Returns the sign of a number as per the "sign" or "signum" function.
+ * @param {number} x The number to take the sign of.
+ * @return {number} -1 when negative, 1 when positive, 0 when 0. Preserves
+ *     signed zeros and NaN.
+ */
+goog.math.sign = Math.sign || function(x) {
+  if (x > 0) {
+    return 1;
+  }
+  if (x < 0) {
+    return -1;
+  }
+  return x;  // Preserves signed zeros and NaN.
+};
+
+
+/**
+ * JavaScript implementation of Longest Common Subsequence problem.
+ * http://en.wikipedia.org/wiki/Longest_common_subsequence
+ *
+ * Returns the longest possible array that is subarray of both of given arrays.
+ *
+ * @param {IArrayLike<S>} array1 First array of objects.
+ * @param {IArrayLike<T>} array2 Second array of objects.
+ * @param {Function=} opt_compareFn Function that acts as a custom comparator
+ *     for the array ojects. Function should return true if objects are equal,
+ *     otherwise false.
+ * @param {Function=} opt_collectorFn Function used to decide what to return
+ *     as a result subsequence. It accepts 2 arguments: index of common element
+ *     in the first array and index in the second. The default function returns
+ *     element from the first array.
+ * @return {!Array<S|T>} A list of objects that are common to both arrays
+ *     such that there is no common subsequence with size greater than the
+ *     length of the list.
+ * @template S,T
+ */
+goog.math.longestCommonSubsequence = function(
+    array1, array2, opt_compareFn, opt_collectorFn) {
+
+  var compare = opt_compareFn || function(a, b) { return a == b; };
+
+  var collect = opt_collectorFn || function(i1, i2) { return array1[i1]; };
+
+  var length1 = array1.length;
+  var length2 = array2.length;
+
+  var arr = [];
+  for (var i = 0; i < length1 + 1; i++) {
+    arr[i] = [];
+    arr[i][0] = 0;
+  }
+
+  for (var j = 0; j < length2 + 1; j++) {
+    arr[0][j] = 0;
+  }
+
+  for (i = 1; i <= length1; i++) {
+    for (j = 1; j <= length2; j++) {
+      if (compare(array1[i - 1], array2[j - 1])) {
+        arr[i][j] = arr[i - 1][j - 1] + 1;
+      } else {
+        arr[i][j] = Math.max(arr[i - 1][j], arr[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtracking
+  var result = [];
+  var i = length1, j = length2;
+  while (i > 0 && j > 0) {
+    if (compare(array1[i - 1], array2[j - 1])) {
+      result.unshift(collect(i - 1, j - 1));
+      i--;
+      j--;
+    } else {
+      if (arr[i - 1][j] > arr[i][j - 1]) {
+        i--;
+      } else {
+        j--;
+      }
+    }
+  }
+
+  return result;
+};
+
+
+/**
+ * Returns the sum of the arguments.
+ * @param {...number} var_args Numbers to add.
+ * @return {number} The sum of the arguments (0 if no arguments were provided,
+ *     {@code NaN} if any of the arguments is not a valid number).
+ */
+goog.math.sum = function(var_args) {
+  return /** @type {number} */ (
+      goog.array.reduce(
+          arguments, function(sum, value) { return sum + value; }, 0));
+};
+
+
+/**
+ * Returns the arithmetic mean of the arguments.
+ * @param {...number} var_args Numbers to average.
+ * @return {number} The average of the arguments ({@code NaN} if no arguments
+ *     were provided or any of the arguments is not a valid number).
+ */
+goog.math.average = function(var_args) {
+  return goog.math.sum.apply(null, arguments) / arguments.length;
+};
+
+
+/**
+ * Returns the unbiased sample variance of the arguments. For a definition,
+ * see e.g. http://en.wikipedia.org/wiki/Variance
+ * @param {...number} var_args Number samples to analyze.
+ * @return {number} The unbiased sample variance of the arguments (0 if fewer
+ *     than two samples were provided, or {@code NaN} if any of the samples is
+ *     not a valid number).
+ */
+goog.math.sampleVariance = function(var_args) {
+  var sampleSize = arguments.length;
+  if (sampleSize < 2) {
+    return 0;
+  }
+
+  var mean = goog.math.average.apply(null, arguments);
+  var variance =
+      goog.math.sum.apply(null, goog.array.map(arguments, function(val) {
+        return Math.pow(val - mean, 2);
+      })) / (sampleSize - 1);
+
+  return variance;
+};
+
+
+/**
+ * Returns the sample standard deviation of the arguments.  For a definition of
+ * sample standard deviation, see e.g.
+ * http://en.wikipedia.org/wiki/Standard_deviation
+ * @param {...number} var_args Number samples to analyze.
+ * @return {number} The sample standard deviation of the arguments (0 if fewer
+ *     than two samples were provided, or {@code NaN} if any of the samples is
+ *     not a valid number).
+ */
+goog.math.standardDeviation = function(var_args) {
+  return Math.sqrt(goog.math.sampleVariance.apply(null, arguments));
+};
+
+
+/**
+ * Returns whether the supplied number represents an integer, i.e. that is has
+ * no fractional component.  No range-checking is performed on the number.
+ * @param {number} num The number to test.
+ * @return {boolean} Whether {@code num} is an integer.
+ */
+goog.math.isInt = function(num) {
+  return isFinite(num) && num % 1 == 0;
+};
+
+
+/**
+ * Returns whether the supplied number is finite and not NaN.
+ * @param {number} num The number to test.
+ * @return {boolean} Whether {@code num} is a finite number.
+ */
+goog.math.isFiniteNumber = function(num) {
+  return isFinite(num) && !isNaN(num);
+};
+
+
+/**
+ * @param {number} num The number to test.
+ * @return {boolean} Whether it is negative zero.
+ */
+goog.math.isNegativeZero = function(num) {
+  return num == 0 && 1 / num < 0;
+};
+
+
+/**
+ * Returns the precise value of floor(log10(num)).
+ * Simpler implementations didn't work because of floating point rounding
+ * errors. For example
+ * <ul>
+ * <li>Math.floor(Math.log(num) / Math.LN10) is off by one for num == 1e+3.
+ * <li>Math.floor(Math.log(num) * Math.LOG10E) is off by one for num == 1e+15.
+ * <li>Math.floor(Math.log10(num)) is off by one for num == 1e+15 - 1.
+ * </ul>
+ * @param {number} num A floating point number.
+ * @return {number} Its logarithm to base 10 rounded down to the nearest
+ *     integer if num > 0. -Infinity if num == 0. NaN if num < 0.
+ */
+goog.math.log10Floor = function(num) {
+  if (num > 0) {
+    var x = Math.round(Math.log(num) * Math.LOG10E);
+    return x - (parseFloat('1e' + x) > num ? 1 : 0);
+  }
+  return num == 0 ? -Infinity : NaN;
+};
+
+
+/**
+ * A tweaked variant of {@code Math.floor} which tolerates if the passed number
+ * is infinitesimally smaller than the closest integer. It often happens with
+ * the results of floating point calculations because of the finite precision
+ * of the intermediate results. For example {@code Math.floor(Math.log(1000) /
+ * Math.LN10) == 2}, not 3 as one would expect.
+ * @param {number} num A number.
+ * @param {number=} opt_epsilon An infinitesimally small positive number, the
+ *     rounding error to tolerate.
+ * @return {number} The largest integer less than or equal to {@code num}.
+ */
+goog.math.safeFloor = function(num, opt_epsilon) {
+  goog.asserts.assert(!goog.isDef(opt_epsilon) || opt_epsilon > 0);
+  return Math.floor(num + (opt_epsilon || 2e-15));
+};
+
+
+/**
+ * A tweaked variant of {@code Math.ceil}. See {@code goog.math.safeFloor} for
+ * details.
+ * @param {number} num A number.
+ * @param {number=} opt_epsilon An infinitesimally small positive number, the
+ *     rounding error to tolerate.
+ * @return {number} The smallest integer greater than or equal to {@code num}.
+ */
+goog.math.safeCeil = function(num, opt_epsilon) {
+  goog.asserts.assert(!goog.isDef(opt_epsilon) || opt_epsilon > 0);
+  return Math.ceil(num - (opt_epsilon || 2e-15));
+};
+
+goog.provide('ngeo.filters');
+
+goog.require('ngeo');
+goog.require('goog.math');
+
+/**
+ * Format a number as a localized scale.
+ * For instance:
+ *  - For 'fr-CH' the value 25000 will become '1 : 25 000'.
+ *  - For 'en-US' the value 25000 will become '1 : 25,000'.
+ *
+ * Example:
+ *
+ *      <p>{{25000 | ngeoScalify}}</p>
+ *
+ *
+ * @param {angular.$filter} $filter Angular filter
+ * @return {function(number): string} A function to format number into a 'scale'
+ *     string.
+ * @ngInject
+ * @ngdoc filter
+ * @ngname ngeoScalify
+ */
+ngeo.Scalify = function($filter) {
+  var numberFilter = $filter('number');
+  return function(scale) {
+    var text = numberFilter(scale, 0);
+    return text ? '1\u00a0:\u00a0' + text : '';
+  };
+};
+
+ngeo.module.filter('ngeoScalify', ngeo.Scalify);
+
+/**
+ * A filter used to format a number with a precision, using the locale.
+ *
+ * Arguments:
+ * - opt_precision: The used precision, default is 3.
+ *
+ * Examples:
+ *
+ *      {{0.1234 | ngeoNumber}} => 0.123
+ *      {{1.234 | ngeoNumber}} => 1.23
+ *      {{12.34 | ngeoNumber}} => 12.3
+ *      {{123.4 | ngeoNumber}} => 123
+ *      {{1234 | ngeoNumber}} => 1230
+ *
+ * @param {angular.$locale} $locale Angular locale
+ * @return {ngeox.number} Function used to format number into a string.
+ * @ngInject
+ * @ngdoc filter
+ * @ngname ngeoNumber
+ */
+ngeo.Number = function($locale) {
+  var formats = $locale.NUMBER_FORMATS;
+
+  /**
+   * @param {number} number The number to format.
+   * @param {number=} opt_precision The used precision, default is 3.
+   * @return {string} The formatted string.
+   */
+  var result = function(number, opt_precision) {
+    var groupSep = formats.GROUP_SEP;
+    var decimalSep = formats.DECIMAL_SEP;
+    if (opt_precision === undefined) {
+      opt_precision = 3;
+    }
+
+    if (number === Infinity) {
+      return '\u221e';
+    } else if (number === -Infinity) {
+      return '-\u221e';
+    } else if (number === 0) {
+      // 0 will creates infinity values
+      return '0';
+    }
+    var sign = number < 0;
+    number = Math.abs(number);
+
+    var nb_decimal = opt_precision - Math.floor(Math.log(number) / Math.log(10)) - 1;
+    var factor = Math.pow(10, nb_decimal);
+    number = Math.round(number * factor);
+    var decimal = '';
+    var unit = Math.floor(number / factor);
+
+    if (nb_decimal > 0) {
+      var str_number = number + '';
+      // 0 padding
+      while (str_number.length < nb_decimal) {
+        str_number = '0' + str_number;
+      }
+      decimal = str_number.substring(str_number.length - nb_decimal);
+      while (decimal[decimal.length - 1] === '0') {
+        decimal = decimal.substring(0, decimal.length - 1);
+      }
+    }
+
+    var groups = [];
+    var str_unit = unit + '';
+    while (str_unit.length > 3) {
+      var index = str_unit.length - 3;
+      groups.unshift(str_unit.substring(index));
+      str_unit = str_unit.substring(0, index);
+    }
+    groups.unshift(str_unit);
+
+    return (sign ? '-' : '') + groups.join(groupSep) + (
+      decimal.length === 0 ? '' : decimalSep + decimal
+    );
+  };
+  return result;
+};
+
+ngeo.module.filter('ngeoNumber', ngeo.Number);
+
+/**
+ * A filter used to format a number with the prefix and unit
+ *
+ * Arguments:
+ * - opt_unit: The unit to used, default is ''.
+ * - opt_type: (unit|square|binary) the type of units, default is 'unit'.
+ * - opt_precision: The used precision, default is 3.
+ *
+ * Examples:
+ *
+ *      {{25000 | ngeoUnitPrefix}} => 25 k
+ *      {{25000 | ngeoUnitPrefix:m}} => 25 km
+ *      {{25000000 | ngeoUnitPrefix:m²:square}} => 25 km²
+ *      {{2048 | ngeoUnitPrefix:o:binary}} => 2 Kio
+ *
+ *
+ * @param {angular.$filter} $filter Angular filter
+ * @return {ngeox.unitPrefix} Function used to format number into a string.
+ * @ngInject
+ * @ngdoc filter
+ * @ngname ngeoUnitPrefix
+ */
+ngeo.UnitPrefix = function($filter) {
+  var numberFilter = $filter('ngeoNumber');
+  var standardPrefix = ['', 'k', 'M', 'G', 'T', 'P'];
+  var binaryPrefix = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi'];
+  /**
+   * @param {number} number The number to format.
+   * @param {string=} opt_unit The unit to used, default is ''.
+   * @param {string=} opt_type (unit|square|binary) the type of units, default is 'unit'.
+   * @param {number=} opt_precision The used precision, default is 3.
+   * @return {string} The formated string.
+   */
+  var result = function(number, opt_unit, opt_type, opt_precision) {
+    if (opt_unit === undefined) {
+      opt_unit = '';
+    }
+    var divisor = 1000;
+    var prefix = standardPrefix;
+    if (opt_type === 'square') {
+      divisor = 1000000;
+    } else if (opt_type === 'binary') {
+      divisor = 1024;
+      prefix = binaryPrefix;
+    }
+
+    var index = 0;
+    var index_max = prefix.length - 1;
+    while (number >= divisor && index < index_max) {
+      number = number / divisor;
+      index++;
+    }
+
+    var postfix = prefix[index] + opt_unit;
+    var space = postfix.length == 0 ? '' : '\u00a0';
+    return numberFilter(number, opt_precision) + space + postfix;
+  };
+  return result;
+};
+
+ngeo.module.filter('ngeoUnitPrefix', ngeo.UnitPrefix);
+
+/**
+ * Format a couple of numbers as number coordinates.
+ *
+ * Example without parameters (en-US localization):
+ *
+ *      <p>{{[7.1234, 46.9876] | ngeoNumberCoordinates}}</p>
+ *      <!-- will Become 7 47 -->
+ *
+ * Example with defined fractionDigits and template (en-US localization):
+ *
+ *      <p>{{[7.1234, 46.9876] | ngeoNumberCoordinates:2:co {x} E; {y} N}}</p>
+ *      <!-- will Become co 7.12 E; 46.99 N -->
+ *
+ * Example without fractionDigits but with defined template and localize:
+ *
+ *      <!-- With en-US localization (opt_localize can be true or undefined) -->
+ *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
+ *      <!-- will Become 2,600,000, 1,600,000 -->
+ *      <br/>
+ *      <!-- With fr-CH localization (opt_localize can be true or undefined) -->
+ *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
+ *      <!-- will Become 2'600'000, 1'600'000 -->
+ *      <br/>
+ *      <!-- With en-US localization but with localization to false -->
+ *      <p>{{[2600000, 1600000] | ngeoNumberCoordinates::{x}, {y}}}</p>
+ *      <!-- will Become 2'600'000, 1'600'000 -->
+ *
+ * @param {angular.$filter} $filter Angular filter
+ * @return {function(ol.Coordinate, (number|string)=, string=,
+ *     (boolean|string)=): string} A function to format numbers into
+ *     coordinates string.
+ * @ngInject
+ * @ngdoc filter
+ * @ngname ngeoNumberCoordinates
+ */
+ngeo.NumberCoordinates = function($filter) {
+  /**
+   * @param {ol.Coordinate} coordinates Array of two numbers.
+   * @param {(number|string)=} opt_fractionDigits Optional number of digit.
+   *     Default to 0.
+   * @param {string=} opt_template Optional template. Default to '{x} {y}'.
+   *     Where "{x}" will be replaced by the first coordinate and "{y}" by the
+   *     second one. Note: Use a html entity to use the semicolon symbole
+   *     into a template.
+   * @return {string} Number formated coordinates.
+   */
+  var filterFn = function(coordinates, opt_fractionDigits, opt_template) {
+    var template = opt_template ? opt_template : '{x} {y}';
+    var x = coordinates[0];
+    var y = coordinates[1];
+    var fractionDigits = parseInt(opt_fractionDigits, 10) | 0;
+    x = $filter('number')(x, fractionDigits);
+    y = $filter('number')(y, fractionDigits);
+    return template.replace('{x}', x).replace('{y}', y);
+  };
+  return filterFn;
+};
+
+ngeo.module.filter('ngeoNumberCoordinates', ngeo.NumberCoordinates);
+
+
+/**
+ * Format a couple of numbers as DMS coordinates.
+ *
+ * Example without parameters:
+ *
+ *      <p>{{[7.1234, 46.9876] | ngeoDMSCoordinates}}</p>
+ *      <!-- will Become 46° 59' 15'' N 7° 07' 24'' E-->
+ *
+ * Example with defined fractionDigits and a template.
+ *
+ *      <p>{{[7.1234, 46.9876] | ngeoDMSCoordinates:2:[{x}; {y}]}}</p>
+ *      <!-- will Become [46° 59' 15.36'' N; 7° 07' 24.24'' E] -->
+ *
+ * @return {function(ol.Coordinate, (number|string)=, string=): string} A
+ *     function to format numbers into a DMS coordinates string.
+ * @ngInject
+ * @ngdoc filter
+ * @ngname ngeoDMSCoordinates
+ */
+ngeo.DMSCoordinates = function() {
+  var degreesToStringHDMS = function(degrees, hemispheres, fractionDigits) {
+    var normalizedDegrees = goog.math.modulo(degrees + 180, 360) - 180;
+    var dms = Math.abs(3600 * normalizedDegrees);
+    var d = Math.floor(dms / 3600);
+    var m = Math.floor((dms / 60) % 60);
+    var s = (dms % 60);
+    return d + '\u00b0 ' +
+        goog.string.padNumber(m, 2) + '\u2032 ' +
+        goog.string.padNumber(s, 2, fractionDigits) + '\u2033 ' +
+        hemispheres.charAt(normalizedDegrees < 0 ? 1 : 0);
+  };
+
+  /**
+   * @param {ol.Coordinate} coordinates Array of two numbers.
+   * @param {(number|string)=} opt_fractionDigits Optional number of digit.
+   *     Default to 0.
+   * @param {string=} opt_template Optional template. Default to
+   *     '{x} {y}'. Where "{x}" will be replaced by the first
+   *     coordinate, {y} by the second one. Note: Use a html entity to use the
+   *     semicolon symbole into a template.
+   * @return {string} DMS formated coordinates.
+   */
+  var filterFn = function(coordinates, opt_fractionDigits, opt_template) {
+    var fractionDigits = parseInt(opt_fractionDigits, 10) | 0;
+
+    var template = opt_template ? opt_template : '{x} {y}';
+
+    var xdms = degreesToStringHDMS(coordinates[1], 'NS', fractionDigits);
+    var ydms = degreesToStringHDMS(coordinates[0], 'EW', fractionDigits);
+
+    return template.replace('{x}', xdms).replace('{y}', ydms);
+  };
+
+  return filterFn;
+};
+
+ngeo.module.filter('ngeoDMSCoordinates', ngeo.DMSCoordinates);
+
+
+/**
+ * A filter to mark a value as trusted HTML.
+ *
+ * Usage:
+ *
+ *    <p ng-bind-html="ctrl.someValue | ngeoTrustHtml"></p>
+ *
+ * @return {function(?):string} The filter function.
+ * @ngInject
+ * @ngdoc filter
+ * @param {angular.$sce} $sce Angular sce service.
+ * @ngname ngeoTrustHtml
+ */
+ngeo.trustHtmlFilter = function($sce) {
+  return function(input) {
+    if (input !== undefined && input !== null) {
+      return $sce.trustAsHtml('' + input);
+    } else {
+      return $sce.trustAsHtml('&nbsp;');
+    }
+  };
+};
+
+ngeo.module.filter('ngeoTrustHtml', ngeo.trustHtmlFilter);
 
 // Copyright 2010 The Closure Library Authors. All Rights Reserved.
 //
@@ -89248,454 +93353,6 @@ goog.html.uncheckedconversions
       'must provide non-empty justification');
   return goog.html.TrustedResourceUrl
       .createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(url);
-};
-
-// Copyright 2006 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Additional mathematical functions.
- */
-
-goog.provide('goog.math');
-
-goog.require('goog.array');
-goog.require('goog.asserts');
-
-
-/**
- * Returns a random integer greater than or equal to 0 and less than {@code a}.
- * @param {number} a  The upper bound for the random integer (exclusive).
- * @return {number} A random integer N such that 0 <= N < a.
- */
-goog.math.randomInt = function(a) {
-  return Math.floor(Math.random() * a);
-};
-
-
-/**
- * Returns a random number greater than or equal to {@code a} and less than
- * {@code b}.
- * @param {number} a  The lower bound for the random number (inclusive).
- * @param {number} b  The upper bound for the random number (exclusive).
- * @return {number} A random number N such that a <= N < b.
- */
-goog.math.uniformRandom = function(a, b) {
-  return a + Math.random() * (b - a);
-};
-
-
-/**
- * Takes a number and clamps it to within the provided bounds.
- * @param {number} value The input number.
- * @param {number} min The minimum value to return.
- * @param {number} max The maximum value to return.
- * @return {number} The input number if it is within bounds, or the nearest
- *     number within the bounds.
- */
-goog.math.clamp = function(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-};
-
-
-/**
- * The % operator in JavaScript returns the remainder of a / b, but differs from
- * some other languages in that the result will have the same sign as the
- * dividend. For example, -1 % 8 == -1, whereas in some other languages
- * (such as Python) the result would be 7. This function emulates the more
- * correct modulo behavior, which is useful for certain applications such as
- * calculating an offset index in a circular list.
- *
- * @param {number} a The dividend.
- * @param {number} b The divisor.
- * @return {number} a % b where the result is between 0 and b (either 0 <= x < b
- *     or b < x <= 0, depending on the sign of b).
- */
-goog.math.modulo = function(a, b) {
-  var r = a % b;
-  // If r and b differ in sign, add b to wrap the result to the correct sign.
-  return (r * b < 0) ? r + b : r;
-};
-
-
-/**
- * Performs linear interpolation between values a and b. Returns the value
- * between a and b proportional to x (when x is between 0 and 1. When x is
- * outside this range, the return value is a linear extrapolation).
- * @param {number} a A number.
- * @param {number} b A number.
- * @param {number} x The proportion between a and b.
- * @return {number} The interpolated value between a and b.
- */
-goog.math.lerp = function(a, b, x) {
-  return a + x * (b - a);
-};
-
-
-/**
- * Tests whether the two values are equal to each other, within a certain
- * tolerance to adjust for floating point errors.
- * @param {number} a A number.
- * @param {number} b A number.
- * @param {number=} opt_tolerance Optional tolerance range. Defaults
- *     to 0.000001. If specified, should be greater than 0.
- * @return {boolean} Whether {@code a} and {@code b} are nearly equal.
- */
-goog.math.nearlyEquals = function(a, b, opt_tolerance) {
-  return Math.abs(a - b) <= (opt_tolerance || 0.000001);
-};
-
-
-// TODO(user): Rename to normalizeAngle, retaining old name as deprecated
-// alias.
-/**
- * Normalizes an angle to be in range [0-360). Angles outside this range will
- * be normalized to be the equivalent angle with that range.
- * @param {number} angle Angle in degrees.
- * @return {number} Standardized angle.
- */
-goog.math.standardAngle = function(angle) {
-  return goog.math.modulo(angle, 360);
-};
-
-
-/**
- * Normalizes an angle to be in range [0-2*PI). Angles outside this range will
- * be normalized to be the equivalent angle with that range.
- * @param {number} angle Angle in radians.
- * @return {number} Standardized angle.
- */
-goog.math.standardAngleInRadians = function(angle) {
-  return goog.math.modulo(angle, 2 * Math.PI);
-};
-
-
-/**
- * Converts degrees to radians.
- * @param {number} angleDegrees Angle in degrees.
- * @return {number} Angle in radians.
- */
-goog.math.toRadians = function(angleDegrees) {
-  return angleDegrees * Math.PI / 180;
-};
-
-
-/**
- * Converts radians to degrees.
- * @param {number} angleRadians Angle in radians.
- * @return {number} Angle in degrees.
- */
-goog.math.toDegrees = function(angleRadians) {
-  return angleRadians * 180 / Math.PI;
-};
-
-
-/**
- * For a given angle and radius, finds the X portion of the offset.
- * @param {number} degrees Angle in degrees (zero points in +X direction).
- * @param {number} radius Radius.
- * @return {number} The x-distance for the angle and radius.
- */
-goog.math.angleDx = function(degrees, radius) {
-  return radius * Math.cos(goog.math.toRadians(degrees));
-};
-
-
-/**
- * For a given angle and radius, finds the Y portion of the offset.
- * @param {number} degrees Angle in degrees (zero points in +X direction).
- * @param {number} radius Radius.
- * @return {number} The y-distance for the angle and radius.
- */
-goog.math.angleDy = function(degrees, radius) {
-  return radius * Math.sin(goog.math.toRadians(degrees));
-};
-
-
-/**
- * Computes the angle between two points (x1,y1) and (x2,y2).
- * Angle zero points in the +X direction, 90 degrees points in the +Y
- * direction (down) and from there we grow clockwise towards 360 degrees.
- * @param {number} x1 x of first point.
- * @param {number} y1 y of first point.
- * @param {number} x2 x of second point.
- * @param {number} y2 y of second point.
- * @return {number} Standardized angle in degrees of the vector from
- *     x1,y1 to x2,y2.
- */
-goog.math.angle = function(x1, y1, x2, y2) {
-  return goog.math.standardAngle(
-      goog.math.toDegrees(Math.atan2(y2 - y1, x2 - x1)));
-};
-
-
-/**
- * Computes the difference between startAngle and endAngle (angles in degrees).
- * @param {number} startAngle  Start angle in degrees.
- * @param {number} endAngle  End angle in degrees.
- * @return {number} The number of degrees that when added to
- *     startAngle will result in endAngle. Positive numbers mean that the
- *     direction is clockwise. Negative numbers indicate a counter-clockwise
- *     direction.
- *     The shortest route (clockwise vs counter-clockwise) between the angles
- *     is used.
- *     When the difference is 180 degrees, the function returns 180 (not -180)
- *     angleDifference(30, 40) is 10, and angleDifference(40, 30) is -10.
- *     angleDifference(350, 10) is 20, and angleDifference(10, 350) is -20.
- */
-goog.math.angleDifference = function(startAngle, endAngle) {
-  var d =
-      goog.math.standardAngle(endAngle) - goog.math.standardAngle(startAngle);
-  if (d > 180) {
-    d = d - 360;
-  } else if (d <= -180) {
-    d = 360 + d;
-  }
-  return d;
-};
-
-
-/**
- * Returns the sign of a number as per the "sign" or "signum" function.
- * @param {number} x The number to take the sign of.
- * @return {number} -1 when negative, 1 when positive, 0 when 0. Preserves
- *     signed zeros and NaN.
- */
-goog.math.sign = Math.sign || function(x) {
-  if (x > 0) {
-    return 1;
-  }
-  if (x < 0) {
-    return -1;
-  }
-  return x;  // Preserves signed zeros and NaN.
-};
-
-
-/**
- * JavaScript implementation of Longest Common Subsequence problem.
- * http://en.wikipedia.org/wiki/Longest_common_subsequence
- *
- * Returns the longest possible array that is subarray of both of given arrays.
- *
- * @param {IArrayLike<S>} array1 First array of objects.
- * @param {IArrayLike<T>} array2 Second array of objects.
- * @param {Function=} opt_compareFn Function that acts as a custom comparator
- *     for the array ojects. Function should return true if objects are equal,
- *     otherwise false.
- * @param {Function=} opt_collectorFn Function used to decide what to return
- *     as a result subsequence. It accepts 2 arguments: index of common element
- *     in the first array and index in the second. The default function returns
- *     element from the first array.
- * @return {!Array<S|T>} A list of objects that are common to both arrays
- *     such that there is no common subsequence with size greater than the
- *     length of the list.
- * @template S,T
- */
-goog.math.longestCommonSubsequence = function(
-    array1, array2, opt_compareFn, opt_collectorFn) {
-
-  var compare = opt_compareFn || function(a, b) { return a == b; };
-
-  var collect = opt_collectorFn || function(i1, i2) { return array1[i1]; };
-
-  var length1 = array1.length;
-  var length2 = array2.length;
-
-  var arr = [];
-  for (var i = 0; i < length1 + 1; i++) {
-    arr[i] = [];
-    arr[i][0] = 0;
-  }
-
-  for (var j = 0; j < length2 + 1; j++) {
-    arr[0][j] = 0;
-  }
-
-  for (i = 1; i <= length1; i++) {
-    for (j = 1; j <= length2; j++) {
-      if (compare(array1[i - 1], array2[j - 1])) {
-        arr[i][j] = arr[i - 1][j - 1] + 1;
-      } else {
-        arr[i][j] = Math.max(arr[i - 1][j], arr[i][j - 1]);
-      }
-    }
-  }
-
-  // Backtracking
-  var result = [];
-  var i = length1, j = length2;
-  while (i > 0 && j > 0) {
-    if (compare(array1[i - 1], array2[j - 1])) {
-      result.unshift(collect(i - 1, j - 1));
-      i--;
-      j--;
-    } else {
-      if (arr[i - 1][j] > arr[i][j - 1]) {
-        i--;
-      } else {
-        j--;
-      }
-    }
-  }
-
-  return result;
-};
-
-
-/**
- * Returns the sum of the arguments.
- * @param {...number} var_args Numbers to add.
- * @return {number} The sum of the arguments (0 if no arguments were provided,
- *     {@code NaN} if any of the arguments is not a valid number).
- */
-goog.math.sum = function(var_args) {
-  return /** @type {number} */ (
-      goog.array.reduce(
-          arguments, function(sum, value) { return sum + value; }, 0));
-};
-
-
-/**
- * Returns the arithmetic mean of the arguments.
- * @param {...number} var_args Numbers to average.
- * @return {number} The average of the arguments ({@code NaN} if no arguments
- *     were provided or any of the arguments is not a valid number).
- */
-goog.math.average = function(var_args) {
-  return goog.math.sum.apply(null, arguments) / arguments.length;
-};
-
-
-/**
- * Returns the unbiased sample variance of the arguments. For a definition,
- * see e.g. http://en.wikipedia.org/wiki/Variance
- * @param {...number} var_args Number samples to analyze.
- * @return {number} The unbiased sample variance of the arguments (0 if fewer
- *     than two samples were provided, or {@code NaN} if any of the samples is
- *     not a valid number).
- */
-goog.math.sampleVariance = function(var_args) {
-  var sampleSize = arguments.length;
-  if (sampleSize < 2) {
-    return 0;
-  }
-
-  var mean = goog.math.average.apply(null, arguments);
-  var variance =
-      goog.math.sum.apply(null, goog.array.map(arguments, function(val) {
-        return Math.pow(val - mean, 2);
-      })) / (sampleSize - 1);
-
-  return variance;
-};
-
-
-/**
- * Returns the sample standard deviation of the arguments.  For a definition of
- * sample standard deviation, see e.g.
- * http://en.wikipedia.org/wiki/Standard_deviation
- * @param {...number} var_args Number samples to analyze.
- * @return {number} The sample standard deviation of the arguments (0 if fewer
- *     than two samples were provided, or {@code NaN} if any of the samples is
- *     not a valid number).
- */
-goog.math.standardDeviation = function(var_args) {
-  return Math.sqrt(goog.math.sampleVariance.apply(null, arguments));
-};
-
-
-/**
- * Returns whether the supplied number represents an integer, i.e. that is has
- * no fractional component.  No range-checking is performed on the number.
- * @param {number} num The number to test.
- * @return {boolean} Whether {@code num} is an integer.
- */
-goog.math.isInt = function(num) {
-  return isFinite(num) && num % 1 == 0;
-};
-
-
-/**
- * Returns whether the supplied number is finite and not NaN.
- * @param {number} num The number to test.
- * @return {boolean} Whether {@code num} is a finite number.
- */
-goog.math.isFiniteNumber = function(num) {
-  return isFinite(num) && !isNaN(num);
-};
-
-
-/**
- * @param {number} num The number to test.
- * @return {boolean} Whether it is negative zero.
- */
-goog.math.isNegativeZero = function(num) {
-  return num == 0 && 1 / num < 0;
-};
-
-
-/**
- * Returns the precise value of floor(log10(num)).
- * Simpler implementations didn't work because of floating point rounding
- * errors. For example
- * <ul>
- * <li>Math.floor(Math.log(num) / Math.LN10) is off by one for num == 1e+3.
- * <li>Math.floor(Math.log(num) * Math.LOG10E) is off by one for num == 1e+15.
- * <li>Math.floor(Math.log10(num)) is off by one for num == 1e+15 - 1.
- * </ul>
- * @param {number} num A floating point number.
- * @return {number} Its logarithm to base 10 rounded down to the nearest
- *     integer if num > 0. -Infinity if num == 0. NaN if num < 0.
- */
-goog.math.log10Floor = function(num) {
-  if (num > 0) {
-    var x = Math.round(Math.log(num) * Math.LOG10E);
-    return x - (parseFloat('1e' + x) > num ? 1 : 0);
-  }
-  return num == 0 ? -Infinity : NaN;
-};
-
-
-/**
- * A tweaked variant of {@code Math.floor} which tolerates if the passed number
- * is infinitesimally smaller than the closest integer. It often happens with
- * the results of floating point calculations because of the finite precision
- * of the intermediate results. For example {@code Math.floor(Math.log(1000) /
- * Math.LN10) == 2}, not 3 as one would expect.
- * @param {number} num A number.
- * @param {number=} opt_epsilon An infinitesimally small positive number, the
- *     rounding error to tolerate.
- * @return {number} The largest integer less than or equal to {@code num}.
- */
-goog.math.safeFloor = function(num, opt_epsilon) {
-  goog.asserts.assert(!goog.isDef(opt_epsilon) || opt_epsilon > 0);
-  return Math.floor(num + (opt_epsilon || 2e-15));
-};
-
-
-/**
- * A tweaked variant of {@code Math.ceil}. See {@code goog.math.safeFloor} for
- * details.
- * @param {number} num A number.
- * @param {number=} opt_epsilon An infinitesimally small positive number, the
- *     rounding error to tolerate.
- * @return {number} The smallest integer greater than or equal to {@code num}.
- */
-goog.math.safeCeil = function(num, opt_epsilon) {
-  goog.asserts.assert(!goog.isDef(opt_epsilon) || opt_epsilon > 0);
-  return Math.ceil(num - (opt_epsilon || 2e-15));
 };
 
 // Copyright 2006 The Closure Library Authors. All Rights Reserved.
@@ -96585,6 +100242,7 @@ goog.require('ngeo.interaction.Measure');
 goog.require('ngeo.interaction.MeasureAzimut');
 goog.require('ngeo.Download');
 goog.require('ol.Feature');
+goog.require('ol.animation');
 goog.require('ol.geom.LineString');
 goog.require('ol.geom.MultiPoint');
 goog.require('ol.geom.Point');
@@ -100341,3368 +103999,6 @@ ngeo.popupDirective = function(ngeoPopupTemplateUrl) {
 };
 
 ngeo.module.directive('ngeoPopup', ngeo.popupDirective);
-
-// Copyright 2010 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview A global registry for entry points into a program,
- * so that they can be instrumented. Each module should register their
- * entry points with this registry. Designed to be compiled out
- * if no instrumentation is requested.
- *
- * Entry points may be registered before or after a call to
- * goog.debug.entryPointRegistry.monitorAll. If an entry point is registered
- * later, the existing monitor will instrument the new entry point.
- *
- * @author nicksantos@google.com (Nick Santos)
- */
-
-goog.provide('goog.debug.EntryPointMonitor');
-goog.provide('goog.debug.entryPointRegistry');
-
-goog.require('goog.asserts');
-
-
-
-/**
- * @interface
- */
-goog.debug.EntryPointMonitor = function() {};
-
-
-/**
- * Instruments a function.
- *
- * @param {!Function} fn A function to instrument.
- * @return {!Function} The instrumented function.
- */
-goog.debug.EntryPointMonitor.prototype.wrap;
-
-
-/**
- * Try to remove an instrumentation wrapper created by this monitor.
- * If the function passed to unwrap is not a wrapper created by this
- * monitor, then we will do nothing.
- *
- * Notice that some wrappers may not be unwrappable. For example, if other
- * monitors have applied their own wrappers, then it will be impossible to
- * unwrap them because their wrappers will have captured our wrapper.
- *
- * So it is important that entry points are unwrapped in the reverse
- * order that they were wrapped.
- *
- * @param {!Function} fn A function to unwrap.
- * @return {!Function} The unwrapped function, or {@code fn} if it was not
- *     a wrapped function created by this monitor.
- */
-goog.debug.EntryPointMonitor.prototype.unwrap;
-
-
-/**
- * An array of entry point callbacks.
- * @type {!Array<function(!Function)>}
- * @private
- */
-goog.debug.entryPointRegistry.refList_ = [];
-
-
-/**
- * Monitors that should wrap all the entry points.
- * @type {!Array<!goog.debug.EntryPointMonitor>}
- * @private
- */
-goog.debug.entryPointRegistry.monitors_ = [];
-
-
-/**
- * Whether goog.debug.entryPointRegistry.monitorAll has ever been called.
- * Checking this allows the compiler to optimize out the registrations.
- * @type {boolean}
- * @private
- */
-goog.debug.entryPointRegistry.monitorsMayExist_ = false;
-
-
-/**
- * Register an entry point with this module.
- *
- * The entry point will be instrumented when a monitor is passed to
- * goog.debug.entryPointRegistry.monitorAll. If this has already occurred, the
- * entry point is instrumented immediately.
- *
- * @param {function(!Function)} callback A callback function which is called
- *     with a transforming function to instrument the entry point. The callback
- *     is responsible for wrapping the relevant entry point with the
- *     transforming function.
- */
-goog.debug.entryPointRegistry.register = function(callback) {
-  // Don't use push(), so that this can be compiled out.
-  goog.debug.entryPointRegistry
-      .refList_[goog.debug.entryPointRegistry.refList_.length] = callback;
-  // If no one calls monitorAll, this can be compiled out.
-  if (goog.debug.entryPointRegistry.monitorsMayExist_) {
-    var monitors = goog.debug.entryPointRegistry.monitors_;
-    for (var i = 0; i < monitors.length; i++) {
-      callback(goog.bind(monitors[i].wrap, monitors[i]));
-    }
-  }
-};
-
-
-/**
- * Configures a monitor to wrap all entry points.
- *
- * Entry points that have already been registered are immediately wrapped by
- * the monitor. When an entry point is registered in the future, it will also
- * be wrapped by the monitor when it is registered.
- *
- * @param {!goog.debug.EntryPointMonitor} monitor An entry point monitor.
- */
-goog.debug.entryPointRegistry.monitorAll = function(monitor) {
-  goog.debug.entryPointRegistry.monitorsMayExist_ = true;
-  var transformer = goog.bind(monitor.wrap, monitor);
-  for (var i = 0; i < goog.debug.entryPointRegistry.refList_.length; i++) {
-    goog.debug.entryPointRegistry.refList_[i](transformer);
-  }
-  goog.debug.entryPointRegistry.monitors_.push(monitor);
-};
-
-
-/**
- * Try to unmonitor all the entry points that have already been registered. If
- * an entry point is registered in the future, it will not be wrapped by the
- * monitor when it is registered. Note that this may fail if the entry points
- * have additional wrapping.
- *
- * @param {!goog.debug.EntryPointMonitor} monitor The last monitor to wrap
- *     the entry points.
- * @throws {Error} If the monitor is not the most recently configured monitor.
- */
-goog.debug.entryPointRegistry.unmonitorAllIfPossible = function(monitor) {
-  var monitors = goog.debug.entryPointRegistry.monitors_;
-  goog.asserts.assert(
-      monitor == monitors[monitors.length - 1],
-      'Only the most recent monitor can be unwrapped.');
-  var transformer = goog.bind(monitor.unwrap, monitor);
-  for (var i = 0; i < goog.debug.entryPointRegistry.refList_.length; i++) {
-    goog.debug.entryPointRegistry.refList_[i](transformer);
-  }
-  monitors.length--;
-};
-
-// Copyright 2010 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Browser capability checks for the events package.
- *
- */
-
-
-goog.provide('goog.events.BrowserFeature');
-
-goog.require('goog.userAgent');
-
-
-/**
- * Enum of browser capabilities.
- * @enum {boolean}
- */
-goog.events.BrowserFeature = {
-  /**
-   * Whether the button attribute of the event is W3C compliant.  False in
-   * Internet Explorer prior to version 9; document-version dependent.
-   */
-  HAS_W3C_BUTTON:
-      !goog.userAgent.IE || goog.userAgent.isDocumentModeOrHigher(9),
-
-  /**
-   * Whether the browser supports full W3C event model.
-   */
-  HAS_W3C_EVENT_SUPPORT:
-      !goog.userAgent.IE || goog.userAgent.isDocumentModeOrHigher(9),
-
-  /**
-   * To prevent default in IE7-8 for certain keydown events we need set the
-   * keyCode to -1.
-   */
-  SET_KEY_CODE_TO_PREVENT_DEFAULT:
-      goog.userAgent.IE && !goog.userAgent.isVersionOrHigher('9'),
-
-  /**
-   * Whether the {@code navigator.onLine} property is supported.
-   */
-  HAS_NAVIGATOR_ONLINE_PROPERTY:
-      !goog.userAgent.WEBKIT || goog.userAgent.isVersionOrHigher('528'),
-
-  /**
-   * Whether HTML5 network online/offline events are supported.
-   */
-  HAS_HTML5_NETWORK_EVENT_SUPPORT:
-      goog.userAgent.GECKO && goog.userAgent.isVersionOrHigher('1.9b') ||
-      goog.userAgent.IE && goog.userAgent.isVersionOrHigher('8') ||
-      goog.userAgent.OPERA && goog.userAgent.isVersionOrHigher('9.5') ||
-      goog.userAgent.WEBKIT && goog.userAgent.isVersionOrHigher('528'),
-
-  /**
-   * Whether HTML5 network events fire on document.body, or otherwise the
-   * window.
-   */
-  HTML5_NETWORK_EVENTS_FIRE_ON_BODY:
-      goog.userAgent.GECKO && !goog.userAgent.isVersionOrHigher('8') ||
-      goog.userAgent.IE && !goog.userAgent.isVersionOrHigher('9'),
-
-  /**
-   * Whether touch is enabled in the browser.
-   */
-  TOUCH_ENABLED:
-      ('ontouchstart' in goog.global ||
-       !!(goog.global['document'] && document.documentElement &&
-          'ontouchstart' in document.documentElement) ||
-       // IE10 uses non-standard touch events, so it has a different check.
-       !!(goog.global['navigator'] &&
-          goog.global['navigator']['msMaxTouchPoints']))
-};
-
-// Copyright 2011 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Definition of the disposable interface.  A disposable object
- * has a dispose method to to clean up references and resources.
- * @author nnaze@google.com (Nathan Naze)
- */
-
-
-goog.provide('goog.disposable.IDisposable');
-
-
-
-/**
- * Interface for a disposable object.  If a instance requires cleanup
- * (references COM objects, DOM notes, or other disposable objects), it should
- * implement this interface (it may subclass goog.Disposable).
- * @interface
- */
-goog.disposable.IDisposable = function() {};
-
-
-/**
- * Disposes of the object and its resources.
- * @return {void} Nothing.
- */
-goog.disposable.IDisposable.prototype.dispose = goog.abstractMethod;
-
-
-/**
- * @return {boolean} Whether the object has been disposed of.
- */
-goog.disposable.IDisposable.prototype.isDisposed = goog.abstractMethod;
-
-// Copyright 2005 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Implements the disposable interface. The dispose method is used
- * to clean up references and resources.
- * @author arv@google.com (Erik Arvidsson)
- */
-
-
-goog.provide('goog.Disposable');
-/** @suppress {extraProvide} */
-goog.provide('goog.dispose');
-/** @suppress {extraProvide} */
-goog.provide('goog.disposeAll');
-
-goog.require('goog.disposable.IDisposable');
-
-
-
-/**
- * Class that provides the basic implementation for disposable objects. If your
- * class holds one or more references to COM objects, DOM nodes, or other
- * disposable objects, it should extend this class or implement the disposable
- * interface (defined in goog.disposable.IDisposable).
- * @constructor
- * @implements {goog.disposable.IDisposable}
- */
-goog.Disposable = function() {
-  if (goog.Disposable.MONITORING_MODE != goog.Disposable.MonitoringMode.OFF) {
-    if (goog.Disposable.INCLUDE_STACK_ON_CREATION) {
-      this.creationStack = new Error().stack;
-    }
-    goog.Disposable.instances_[goog.getUid(this)] = this;
-  }
-  // Support sealing
-  this.disposed_ = this.disposed_;
-  this.onDisposeCallbacks_ = this.onDisposeCallbacks_;
-};
-
-
-/**
- * @enum {number} Different monitoring modes for Disposable.
- */
-goog.Disposable.MonitoringMode = {
-  /**
-   * No monitoring.
-   */
-  OFF: 0,
-  /**
-   * Creating and disposing the goog.Disposable instances is monitored. All
-   * disposable objects need to call the {@code goog.Disposable} base
-   * constructor. The PERMANENT mode must be switched on before creating any
-   * goog.Disposable instances.
-   */
-  PERMANENT: 1,
-  /**
-   * INTERACTIVE mode can be switched on and off on the fly without producing
-   * errors. It also doesn't warn if the disposable objects don't call the
-   * {@code goog.Disposable} base constructor.
-   */
-  INTERACTIVE: 2
-};
-
-
-/**
- * @define {number} The monitoring mode of the goog.Disposable
- *     instances. Default is OFF. Switching on the monitoring is only
- *     recommended for debugging because it has a significant impact on
- *     performance and memory usage. If switched off, the monitoring code
- *     compiles down to 0 bytes.
- */
-goog.define('goog.Disposable.MONITORING_MODE', 0);
-
-
-/**
- * @define {boolean} Whether to attach creation stack to each created disposable
- *     instance; This is only relevant for when MonitoringMode != OFF.
- */
-goog.define('goog.Disposable.INCLUDE_STACK_ON_CREATION', true);
-
-
-/**
- * Maps the unique ID of every undisposed {@code goog.Disposable} object to
- * the object itself.
- * @type {!Object<number, !goog.Disposable>}
- * @private
- */
-goog.Disposable.instances_ = {};
-
-
-/**
- * @return {!Array<!goog.Disposable>} All {@code goog.Disposable} objects that
- *     haven't been disposed of.
- */
-goog.Disposable.getUndisposedObjects = function() {
-  var ret = [];
-  for (var id in goog.Disposable.instances_) {
-    if (goog.Disposable.instances_.hasOwnProperty(id)) {
-      ret.push(goog.Disposable.instances_[Number(id)]);
-    }
-  }
-  return ret;
-};
-
-
-/**
- * Clears the registry of undisposed objects but doesn't dispose of them.
- */
-goog.Disposable.clearUndisposedObjects = function() {
-  goog.Disposable.instances_ = {};
-};
-
-
-/**
- * Whether the object has been disposed of.
- * @type {boolean}
- * @private
- */
-goog.Disposable.prototype.disposed_ = false;
-
-
-/**
- * Callbacks to invoke when this object is disposed.
- * @type {Array<!Function>}
- * @private
- */
-goog.Disposable.prototype.onDisposeCallbacks_;
-
-
-/**
- * If monitoring the goog.Disposable instances is enabled, stores the creation
- * stack trace of the Disposable instance.
- * @const {string}
- */
-goog.Disposable.prototype.creationStack;
-
-
-/**
- * @return {boolean} Whether the object has been disposed of.
- * @override
- */
-goog.Disposable.prototype.isDisposed = function() {
-  return this.disposed_;
-};
-
-
-/**
- * @return {boolean} Whether the object has been disposed of.
- * @deprecated Use {@link #isDisposed} instead.
- */
-goog.Disposable.prototype.getDisposed = goog.Disposable.prototype.isDisposed;
-
-
-/**
- * Disposes of the object. If the object hasn't already been disposed of, calls
- * {@link #disposeInternal}. Classes that extend {@code goog.Disposable} should
- * override {@link #disposeInternal} in order to delete references to COM
- * objects, DOM nodes, and other disposable objects. Reentrant.
- *
- * @return {void} Nothing.
- * @override
- */
-goog.Disposable.prototype.dispose = function() {
-  if (!this.disposed_) {
-    // Set disposed_ to true first, in case during the chain of disposal this
-    // gets disposed recursively.
-    this.disposed_ = true;
-    this.disposeInternal();
-    if (goog.Disposable.MONITORING_MODE != goog.Disposable.MonitoringMode.OFF) {
-      var uid = goog.getUid(this);
-      if (goog.Disposable.MONITORING_MODE ==
-              goog.Disposable.MonitoringMode.PERMANENT &&
-          !goog.Disposable.instances_.hasOwnProperty(uid)) {
-        throw Error(
-            this + ' did not call the goog.Disposable base ' +
-            'constructor or was disposed of after a clearUndisposedObjects ' +
-            'call');
-      }
-      delete goog.Disposable.instances_[uid];
-    }
-  }
-};
-
-
-/**
- * Associates a disposable object with this object so that they will be disposed
- * together.
- * @param {goog.disposable.IDisposable} disposable that will be disposed when
- *     this object is disposed.
- */
-goog.Disposable.prototype.registerDisposable = function(disposable) {
-  this.addOnDisposeCallback(goog.partial(goog.dispose, disposable));
-};
-
-
-/**
- * Invokes a callback function when this object is disposed. Callbacks are
- * invoked in the order in which they were added. If a callback is added to
- * an already disposed Disposable, it will be called immediately.
- * @param {function(this:T):?} callback The callback function.
- * @param {T=} opt_scope An optional scope to call the callback in.
- * @template T
- */
-goog.Disposable.prototype.addOnDisposeCallback = function(callback, opt_scope) {
-  if (this.disposed_) {
-    callback.call(opt_scope);
-    return;
-  }
-  if (!this.onDisposeCallbacks_) {
-    this.onDisposeCallbacks_ = [];
-  }
-
-  this.onDisposeCallbacks_.push(
-      goog.isDef(opt_scope) ? goog.bind(callback, opt_scope) : callback);
-};
-
-
-/**
- * Deletes or nulls out any references to COM objects, DOM nodes, or other
- * disposable objects. Classes that extend {@code goog.Disposable} should
- * override this method.
- * Not reentrant. To avoid calling it twice, it must only be called from the
- * subclass' {@code disposeInternal} method. Everywhere else the public
- * {@code dispose} method must be used.
- * For example:
- * <pre>
- *   mypackage.MyClass = function() {
- *     mypackage.MyClass.base(this, 'constructor');
- *     // Constructor logic specific to MyClass.
- *     ...
- *   };
- *   goog.inherits(mypackage.MyClass, goog.Disposable);
- *
- *   mypackage.MyClass.prototype.disposeInternal = function() {
- *     // Dispose logic specific to MyClass.
- *     ...
- *     // Call superclass's disposeInternal at the end of the subclass's, like
- *     // in C++, to avoid hard-to-catch issues.
- *     mypackage.MyClass.base(this, 'disposeInternal');
- *   };
- * </pre>
- * @protected
- */
-goog.Disposable.prototype.disposeInternal = function() {
-  if (this.onDisposeCallbacks_) {
-    while (this.onDisposeCallbacks_.length) {
-      this.onDisposeCallbacks_.shift()();
-    }
-  }
-};
-
-
-/**
- * Returns True if we can verify the object is disposed.
- * Calls {@code isDisposed} on the argument if it supports it.  If obj
- * is not an object with an isDisposed() method, return false.
- * @param {*} obj The object to investigate.
- * @return {boolean} True if we can verify the object is disposed.
- */
-goog.Disposable.isDisposed = function(obj) {
-  if (obj && typeof obj.isDisposed == 'function') {
-    return obj.isDisposed();
-  }
-  return false;
-};
-
-
-/**
- * Calls {@code dispose} on the argument if it supports it. If obj is not an
- *     object with a dispose() method, this is a no-op.
- * @param {*} obj The object to dispose of.
- */
-goog.dispose = function(obj) {
-  if (obj && typeof obj.dispose == 'function') {
-    obj.dispose();
-  }
-};
-
-
-/**
- * Calls {@code dispose} on each member of the list that supports it. (If the
- * member is an ArrayLike, then {@code goog.disposeAll()} will be called
- * recursively on each of its members.) If the member is not an object with a
- * {@code dispose()} method, then it is ignored.
- * @param {...*} var_args The list.
- */
-goog.disposeAll = function(var_args) {
-  for (var i = 0, len = arguments.length; i < len; ++i) {
-    var disposable = arguments[i];
-    if (goog.isArrayLike(disposable)) {
-      goog.disposeAll.apply(null, disposable);
-    } else {
-      goog.dispose(disposable);
-    }
-  }
-};
-
-// Copyright 2013 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-goog.provide('goog.events.EventId');
-
-
-
-/**
- * A templated class that is used when registering for events. Typical usage:
- *
- *    /** @type {goog.events.EventId<MyEventObj>} *\
- *    var myEventId = new goog.events.EventId(
- *        goog.events.getUniqueId(('someEvent'));
- *
- *    // No need to cast or declare here since the compiler knows the
- *    // correct type of 'evt' (MyEventObj).
- *    something.listen(myEventId, function(evt) {});
- *
- * @param {string} eventId
- * @template T
- * @constructor
- * @struct
- * @final
- */
-goog.events.EventId = function(eventId) {
-  /** @const */ this.id = eventId;
-};
-
-
-/**
- * @override
- */
-goog.events.EventId.prototype.toString = function() {
-  return this.id;
-};
-
-// Copyright 2005 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview A base class for event objects.
- *
- */
-
-
-goog.provide('goog.events.Event');
-goog.provide('goog.events.EventLike');
-
-/**
- * goog.events.Event no longer depends on goog.Disposable. Keep requiring
- * goog.Disposable here to not break projects which assume this dependency.
- * @suppress {extraRequire}
- */
-goog.require('goog.Disposable');
-goog.require('goog.events.EventId');
-
-
-/**
- * A typedef for event like objects that are dispatchable via the
- * goog.events.dispatchEvent function. strings are treated as the type for a
- * goog.events.Event. Objects are treated as an extension of a new
- * goog.events.Event with the type property of the object being used as the type
- * of the Event.
- * @typedef {string|Object|goog.events.Event|goog.events.EventId}
- */
-goog.events.EventLike;
-
-
-
-/**
- * A base class for event objects, so that they can support preventDefault and
- * stopPropagation.
- *
- * @suppress {underscore} Several properties on this class are technically
- *     public, but referencing these properties outside this package is strongly
- *     discouraged.
- *
- * @param {string|!goog.events.EventId} type Event Type.
- * @param {Object=} opt_target Reference to the object that is the target of
- *     this event. It has to implement the {@code EventTarget} interface
- *     declared at {@link http://developer.mozilla.org/en/DOM/EventTarget}.
- * @constructor
- */
-goog.events.Event = function(type, opt_target) {
-  /**
-   * Event type.
-   * @type {string}
-   */
-  this.type = type instanceof goog.events.EventId ? String(type) : type;
-
-  /**
-   * TODO(tbreisacher): The type should probably be
-   * EventTarget|goog.events.EventTarget.
-   *
-   * Target of the event.
-   * @type {Object|undefined}
-   */
-  this.target = opt_target;
-
-  /**
-   * Object that had the listener attached.
-   * @type {Object|undefined}
-   */
-  this.currentTarget = this.target;
-
-  /**
-   * Whether to cancel the event in internal capture/bubble processing for IE.
-   * @type {boolean}
-   * @public
-   */
-  this.propagationStopped_ = false;
-
-  /**
-   * Whether the default action has been prevented.
-   * This is a property to match the W3C specification at
-   * {@link http://www.w3.org/TR/DOM-Level-3-Events/
-   * #events-event-type-defaultPrevented}.
-   * Must be treated as read-only outside the class.
-   * @type {boolean}
-   */
-  this.defaultPrevented = false;
-
-  /**
-   * Return value for in internal capture/bubble processing for IE.
-   * @type {boolean}
-   * @public
-   * @suppress {underscore|visibility} Technically public, but referencing this
-   *     outside this package is strongly discouraged.
-   */
-  this.returnValue_ = true;
-};
-
-
-/**
- * Stops event propagation.
- */
-goog.events.Event.prototype.stopPropagation = function() {
-  this.propagationStopped_ = true;
-};
-
-
-/**
- * Prevents the default action, for example a link redirecting to a url.
- */
-goog.events.Event.prototype.preventDefault = function() {
-  this.defaultPrevented = true;
-  this.returnValue_ = false;
-};
-
-
-/**
- * Stops the propagation of the event. It is equivalent to
- * {@code e.stopPropagation()}, but can be used as the callback argument of
- * {@link goog.events.listen} without declaring another function.
- * @param {!goog.events.Event} e An event.
- */
-goog.events.Event.stopPropagation = function(e) {
-  e.stopPropagation();
-};
-
-
-/**
- * Prevents the default action. It is equivalent to
- * {@code e.preventDefault()}, but can be used as the callback argument of
- * {@link goog.events.listen} without declaring another function.
- * @param {!goog.events.Event} e An event.
- */
-goog.events.Event.preventDefault = function(e) {
-  e.preventDefault();
-};
-
-// Copyright 2010 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Event Types.
- *
- * @author arv@google.com (Erik Arvidsson)
- */
-
-
-goog.provide('goog.events.EventType');
-
-goog.require('goog.userAgent');
-
-
-/**
- * Returns a prefixed event name for the current browser.
- * @param {string} eventName The name of the event.
- * @return {string} The prefixed event name.
- * @suppress {missingRequire|missingProvide}
- * @private
- */
-goog.events.getVendorPrefixedName_ = function(eventName) {
-  return goog.userAgent.WEBKIT ?
-      'webkit' + eventName :
-      (goog.userAgent.OPERA ? 'o' + eventName.toLowerCase() :
-                              eventName.toLowerCase());
-};
-
-
-/**
- * Constants for event names.
- * @enum {string}
- */
-goog.events.EventType = {
-  // Mouse events
-  CLICK: 'click',
-  RIGHTCLICK: 'rightclick',
-  DBLCLICK: 'dblclick',
-  MOUSEDOWN: 'mousedown',
-  MOUSEUP: 'mouseup',
-  MOUSEOVER: 'mouseover',
-  MOUSEOUT: 'mouseout',
-  MOUSEMOVE: 'mousemove',
-  MOUSEENTER: 'mouseenter',
-  MOUSELEAVE: 'mouseleave',
-  // Select start is non-standard.
-  // See http://msdn.microsoft.com/en-us/library/ie/ms536969(v=vs.85).aspx.
-  SELECTSTART: 'selectstart',  // IE, Safari, Chrome
-
-  // Wheel events
-  // http://www.w3.org/TR/DOM-Level-3-Events/#events-wheelevents
-  WHEEL: 'wheel',
-
-  // Key events
-  KEYPRESS: 'keypress',
-  KEYDOWN: 'keydown',
-  KEYUP: 'keyup',
-
-  // Focus
-  BLUR: 'blur',
-  FOCUS: 'focus',
-  DEACTIVATE: 'deactivate',  // IE only
-  // NOTE: The following two events are not stable in cross-browser usage.
-  //     WebKit and Opera implement DOMFocusIn/Out.
-  //     IE implements focusin/out.
-  //     Gecko implements neither see bug at
-  //     https://bugzilla.mozilla.org/show_bug.cgi?id=396927.
-  // The DOM Events Level 3 Draft deprecates DOMFocusIn in favor of focusin:
-  //     http://dev.w3.org/2006/webapi/DOM-Level-3-Events/html/DOM3-Events.html
-  // You can use FOCUS in Capture phase until implementations converge.
-  FOCUSIN: goog.userAgent.IE ? 'focusin' : 'DOMFocusIn',
-  FOCUSOUT: goog.userAgent.IE ? 'focusout' : 'DOMFocusOut',
-
-  // Forms
-  CHANGE: 'change',
-  RESET: 'reset',
-  SELECT: 'select',
-  SUBMIT: 'submit',
-  INPUT: 'input',
-  PROPERTYCHANGE: 'propertychange',  // IE only
-
-  // Drag and drop
-  DRAGSTART: 'dragstart',
-  DRAG: 'drag',
-  DRAGENTER: 'dragenter',
-  DRAGOVER: 'dragover',
-  DRAGLEAVE: 'dragleave',
-  DROP: 'drop',
-  DRAGEND: 'dragend',
-
-  // Touch events
-  // Note that other touch events exist, but we should follow the W3C list here.
-  // http://www.w3.org/TR/touch-events/#list-of-touchevent-types
-  TOUCHSTART: 'touchstart',
-  TOUCHMOVE: 'touchmove',
-  TOUCHEND: 'touchend',
-  TOUCHCANCEL: 'touchcancel',
-
-  // Misc
-  BEFOREUNLOAD: 'beforeunload',
-  CONSOLEMESSAGE: 'consolemessage',
-  CONTEXTMENU: 'contextmenu',
-  DOMCONTENTLOADED: 'DOMContentLoaded',
-  ERROR: 'error',
-  HELP: 'help',
-  LOAD: 'load',
-  LOSECAPTURE: 'losecapture',
-  ORIENTATIONCHANGE: 'orientationchange',
-  READYSTATECHANGE: 'readystatechange',
-  RESIZE: 'resize',
-  SCROLL: 'scroll',
-  UNLOAD: 'unload',
-
-  // Media events
-  CANPLAY: 'canplay',
-  CANPLAYTHROUGH: 'canplaythrough',
-  DURATIONCHANGE: 'durationchange',
-  EMPTIED: 'emptied',
-  ENDED: 'ended',
-  LOADEDDATA: 'loadeddata',
-  LOADEDMETADATA: 'loadedmetadata',
-  PAUSE: 'pause',
-  PLAY: 'play',
-  PLAYING: 'playing',
-  RATECHANGE: 'ratechange',
-  SEEKED: 'seeked',
-  SEEKING: 'seeking',
-  STALLED: 'stalled',
-  SUSPEND: 'suspend',
-  TIMEUPDATE: 'timeupdate',
-  VOLUMECHANGE: 'volumechange',
-  WAITING: 'waiting',
-
-  // HTML 5 History events
-  // See http://www.w3.org/TR/html5/browsers.html#event-definitions-0
-  HASHCHANGE: 'hashchange',
-  PAGEHIDE: 'pagehide',
-  PAGESHOW: 'pageshow',
-  POPSTATE: 'popstate',
-
-  // Copy and Paste
-  // Support is limited. Make sure it works on your favorite browser
-  // before using.
-  // http://www.quirksmode.org/dom/events/cutcopypaste.html
-  COPY: 'copy',
-  PASTE: 'paste',
-  CUT: 'cut',
-  BEFORECOPY: 'beforecopy',
-  BEFORECUT: 'beforecut',
-  BEFOREPASTE: 'beforepaste',
-
-  // HTML5 online/offline events.
-  // http://www.w3.org/TR/offline-webapps/#related
-  ONLINE: 'online',
-  OFFLINE: 'offline',
-
-  // HTML 5 worker events
-  MESSAGE: 'message',
-  CONNECT: 'connect',
-
-  // CSS animation events.
-  /** @suppress {missingRequire} */
-  ANIMATIONSTART: goog.events.getVendorPrefixedName_('AnimationStart'),
-  /** @suppress {missingRequire} */
-  ANIMATIONEND: goog.events.getVendorPrefixedName_('AnimationEnd'),
-  /** @suppress {missingRequire} */
-  ANIMATIONITERATION: goog.events.getVendorPrefixedName_('AnimationIteration'),
-
-  // CSS transition events. Based on the browser support described at:
-  // https://developer.mozilla.org/en/css/css_transitions#Browser_compatibility
-  /** @suppress {missingRequire} */
-  TRANSITIONEND: goog.events.getVendorPrefixedName_('TransitionEnd'),
-
-  // W3C Pointer Events
-  // http://www.w3.org/TR/pointerevents/
-  POINTERDOWN: 'pointerdown',
-  POINTERUP: 'pointerup',
-  POINTERCANCEL: 'pointercancel',
-  POINTERMOVE: 'pointermove',
-  POINTEROVER: 'pointerover',
-  POINTEROUT: 'pointerout',
-  POINTERENTER: 'pointerenter',
-  POINTERLEAVE: 'pointerleave',
-  GOTPOINTERCAPTURE: 'gotpointercapture',
-  LOSTPOINTERCAPTURE: 'lostpointercapture',
-
-  // IE specific events.
-  // See http://msdn.microsoft.com/en-us/library/ie/hh772103(v=vs.85).aspx
-  // Note: these events will be supplanted in IE11.
-  MSGESTURECHANGE: 'MSGestureChange',
-  MSGESTUREEND: 'MSGestureEnd',
-  MSGESTUREHOLD: 'MSGestureHold',
-  MSGESTURESTART: 'MSGestureStart',
-  MSGESTURETAP: 'MSGestureTap',
-  MSGOTPOINTERCAPTURE: 'MSGotPointerCapture',
-  MSINERTIASTART: 'MSInertiaStart',
-  MSLOSTPOINTERCAPTURE: 'MSLostPointerCapture',
-  MSPOINTERCANCEL: 'MSPointerCancel',
-  MSPOINTERDOWN: 'MSPointerDown',
-  MSPOINTERENTER: 'MSPointerEnter',
-  MSPOINTERHOVER: 'MSPointerHover',
-  MSPOINTERLEAVE: 'MSPointerLeave',
-  MSPOINTERMOVE: 'MSPointerMove',
-  MSPOINTEROUT: 'MSPointerOut',
-  MSPOINTEROVER: 'MSPointerOver',
-  MSPOINTERUP: 'MSPointerUp',
-
-  // Native IMEs/input tools events.
-  TEXT: 'text',
-  TEXTINPUT: 'textInput',
-  COMPOSITIONSTART: 'compositionstart',
-  COMPOSITIONUPDATE: 'compositionupdate',
-  COMPOSITIONEND: 'compositionend',
-
-  // Webview tag events
-  // See http://developer.chrome.com/dev/apps/webview_tag.html
-  EXIT: 'exit',
-  LOADABORT: 'loadabort',
-  LOADCOMMIT: 'loadcommit',
-  LOADREDIRECT: 'loadredirect',
-  LOADSTART: 'loadstart',
-  LOADSTOP: 'loadstop',
-  RESPONSIVE: 'responsive',
-  SIZECHANGED: 'sizechanged',
-  UNRESPONSIVE: 'unresponsive',
-
-  // HTML5 Page Visibility API.  See details at
-  // {@code goog.labs.dom.PageVisibilityMonitor}.
-  VISIBILITYCHANGE: 'visibilitychange',
-
-  // LocalStorage event.
-  STORAGE: 'storage',
-
-  // DOM Level 2 mutation events (deprecated).
-  DOMSUBTREEMODIFIED: 'DOMSubtreeModified',
-  DOMNODEINSERTED: 'DOMNodeInserted',
-  DOMNODEREMOVED: 'DOMNodeRemoved',
-  DOMNODEREMOVEDFROMDOCUMENT: 'DOMNodeRemovedFromDocument',
-  DOMNODEINSERTEDINTODOCUMENT: 'DOMNodeInsertedIntoDocument',
-  DOMATTRMODIFIED: 'DOMAttrModified',
-  DOMCHARACTERDATAMODIFIED: 'DOMCharacterDataModified',
-
-  // Print events.
-  BEFOREPRINT: 'beforeprint',
-  AFTERPRINT: 'afterprint'
-};
-
-// Copyright 2009 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Useful compiler idioms.
- *
- * @author johnlenz@google.com (John Lenz)
- */
-
-goog.provide('goog.reflect');
-
-
-/**
- * Syntax for object literal casts.
- * @see http://go/jscompiler-renaming
- * @see https://goo.gl/CRs09P
- *
- * Use this if you have an object literal whose keys need to have the same names
- * as the properties of some class even after they are renamed by the compiler.
- *
- * @param {!Function} type Type to cast to.
- * @param {Object} object Object literal to cast.
- * @return {Object} The object literal.
- */
-goog.reflect.object = function(type, object) {
-  return object;
-};
-
-/**
- * Syntax for renaming property strings.
- * @see http://go/jscompiler-renaming
- * @see https://goo.gl/CRs09P
- *
- * Use this if you have an need to access a property as a string, but want
- * to also have the property renamed by the compiler. In contrast to
- * goog.reflect.object, this method takes an instance of an object.
- *
- * Properties must be simple names (not qualified names).
- *
- * @param {string} prop Name of the property
- * @param {!Object} object Instance of the object whose type will be used
- *     for renaming
- * @return {string} The renamed property.
- */
-goog.reflect.objectProperty = function(prop, object) {
-  return prop;
-};
-
-/**
- * To assert to the compiler that an operation is needed when it would
- * otherwise be stripped. For example:
- * <code>
- *     // Force a layout
- *     goog.reflect.sinkValue(dialog.offsetHeight);
- * </code>
- * @param {T} x
- * @return {T}
- * @template T
- */
-goog.reflect.sinkValue = function(x) {
-  goog.reflect.sinkValue[' '](x);
-  return x;
-};
-
-
-/**
- * The compiler should optimize this function away iff no one ever uses
- * goog.reflect.sinkValue.
- */
-goog.reflect.sinkValue[' '] = goog.nullFunction;
-
-
-/**
- * Check if a property can be accessed without throwing an exception.
- * @param {Object} obj The owner of the property.
- * @param {string} prop The property name.
- * @return {boolean} Whether the property is accessible. Will also return true
- *     if obj is null.
- */
-goog.reflect.canAccessProperty = function(obj, prop) {
-  /** @preserveTry */
-  try {
-    goog.reflect.sinkValue(obj[prop]);
-    return true;
-  } catch (e) {
-  }
-  return false;
-};
-
-
-/**
- * Retrieves a value from a cache given a key. The compiler provides special
- * consideration for this call such that it is generally considered side-effect
- * free. However, if the {@code opt_keyFn} or {@code valueFn} have side-effects
- * then the entire call is considered to have side-effects.
- *
- * Conventionally storing the value on the cache would be considered a
- * side-effect and preclude unused calls from being pruned, ie. even if
- * the value was never used, it would still always be stored in the cache.
- *
- * Providing a side-effect free {@code valueFn} and {@code opt_keyFn}
- * allows unused calls to {@code goog.cache} to be pruned.
- *
- * @param {!Object<K, V>} cacheObj The object that contains the cached values.
- * @param {?} key The key to lookup in the cache. If it is not string or number
- *     then a {@code opt_keyFn} should be provided. The key is also used as the
- *     parameter to the {@code valueFn}.
- * @param {!function(?):V} valueFn The value provider to use to calculate the
- *     value to store in the cache. This function should be side-effect free
- *     to take advantage of the optimization.
- * @param {function(?):K=} opt_keyFn The key provider to determine the cache
- *     map key. This should be used if the given key is not a string or number.
- *     If not provided then the given key is used. This function should be
- *     side-effect free to take advantage of the optimization.
- * @return {V} The cached or calculated value.
- * @template K
- * @template V
- */
-goog.reflect.cache = function(cacheObj, key, valueFn, opt_keyFn) {
-  var storedKey = opt_keyFn ? opt_keyFn(key) : key;
-
-  if (Object.prototype.hasOwnProperty.call(cacheObj, storedKey)) {
-    return cacheObj[storedKey];
-  }
-
-  return (cacheObj[storedKey] = valueFn(key));
-};
-
-// Copyright 2005 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview A patched, standardized event object for browser events.
- *
- * <pre>
- * The patched event object contains the following members:
- * - type           {string}    Event type, e.g. 'click'
- * - target         {Object}    The element that actually triggered the event
- * - currentTarget  {Object}    The element the listener is attached to
- * - relatedTarget  {Object}    For mouseover and mouseout, the previous object
- * - offsetX        {number}    X-coordinate relative to target
- * - offsetY        {number}    Y-coordinate relative to target
- * - clientX        {number}    X-coordinate relative to viewport
- * - clientY        {number}    Y-coordinate relative to viewport
- * - screenX        {number}    X-coordinate relative to the edge of the screen
- * - screenY        {number}    Y-coordinate relative to the edge of the screen
- * - button         {number}    Mouse button. Use isButton() to test.
- * - keyCode        {number}    Key-code
- * - ctrlKey        {boolean}   Was ctrl key depressed
- * - altKey         {boolean}   Was alt key depressed
- * - shiftKey       {boolean}   Was shift key depressed
- * - metaKey        {boolean}   Was meta key depressed
- * - defaultPrevented {boolean} Whether the default action has been prevented
- * - state          {Object}    History state object
- *
- * NOTE: The keyCode member contains the raw browser keyCode. For normalized
- * key and character code use {@link goog.events.KeyHandler}.
- * </pre>
- *
- * @author arv@google.com (Erik Arvidsson)
- */
-
-goog.provide('goog.events.BrowserEvent');
-goog.provide('goog.events.BrowserEvent.MouseButton');
-
-goog.require('goog.events.BrowserFeature');
-goog.require('goog.events.Event');
-goog.require('goog.events.EventType');
-goog.require('goog.reflect');
-goog.require('goog.userAgent');
-
-
-
-/**
- * Accepts a browser event object and creates a patched, cross browser event
- * object.
- * The content of this object will not be initialized if no event object is
- * provided. If this is the case, init() needs to be invoked separately.
- * @param {Event=} opt_e Browser event object.
- * @param {EventTarget=} opt_currentTarget Current target for event.
- * @constructor
- * @extends {goog.events.Event}
- */
-goog.events.BrowserEvent = function(opt_e, opt_currentTarget) {
-  goog.events.BrowserEvent.base(this, 'constructor', opt_e ? opt_e.type : '');
-
-  /**
-   * Target that fired the event.
-   * @override
-   * @type {Node}
-   */
-  this.target = null;
-
-  /**
-   * Node that had the listener attached.
-   * @override
-   * @type {Node|undefined}
-   */
-  this.currentTarget = null;
-
-  /**
-   * For mouseover and mouseout events, the related object for the event.
-   * @type {Node}
-   */
-  this.relatedTarget = null;
-
-  /**
-   * X-coordinate relative to target.
-   * @type {number}
-   */
-  this.offsetX = 0;
-
-  /**
-   * Y-coordinate relative to target.
-   * @type {number}
-   */
-  this.offsetY = 0;
-
-  /**
-   * X-coordinate relative to the window.
-   * @type {number}
-   */
-  this.clientX = 0;
-
-  /**
-   * Y-coordinate relative to the window.
-   * @type {number}
-   */
-  this.clientY = 0;
-
-  /**
-   * X-coordinate relative to the monitor.
-   * @type {number}
-   */
-  this.screenX = 0;
-
-  /**
-   * Y-coordinate relative to the monitor.
-   * @type {number}
-   */
-  this.screenY = 0;
-
-  /**
-   * Which mouse button was pressed.
-   * @type {number}
-   */
-  this.button = 0;
-
-  /**
-   * Keycode of key press.
-   * @type {number}
-   */
-  this.keyCode = 0;
-
-  /**
-   * Keycode of key press.
-   * @type {number}
-   */
-  this.charCode = 0;
-
-  /**
-   * Whether control was pressed at time of event.
-   * @type {boolean}
-   */
-  this.ctrlKey = false;
-
-  /**
-   * Whether alt was pressed at time of event.
-   * @type {boolean}
-   */
-  this.altKey = false;
-
-  /**
-   * Whether shift was pressed at time of event.
-   * @type {boolean}
-   */
-  this.shiftKey = false;
-
-  /**
-   * Whether the meta key was pressed at time of event.
-   * @type {boolean}
-   */
-  this.metaKey = false;
-
-  /**
-   * History state object, only set for PopState events where it's a copy of the
-   * state object provided to pushState or replaceState.
-   * @type {Object}
-   */
-  this.state = null;
-
-  /**
-   * Whether the default platform modifier key was pressed at time of event.
-   * (This is control for all platforms except Mac, where it's Meta.)
-   * @type {boolean}
-   */
-  this.platformModifierKey = false;
-
-  /**
-   * The browser event object.
-   * @private {Event}
-   */
-  this.event_ = null;
-
-  if (opt_e) {
-    this.init(opt_e, opt_currentTarget);
-  }
-};
-goog.inherits(goog.events.BrowserEvent, goog.events.Event);
-
-
-/**
- * Normalized button constants for the mouse.
- * @enum {number}
- */
-goog.events.BrowserEvent.MouseButton = {
-  LEFT: 0,
-  MIDDLE: 1,
-  RIGHT: 2
-};
-
-
-/**
- * Static data for mapping mouse buttons.
- * @type {!Array<number>}
- */
-goog.events.BrowserEvent.IEButtonMap = [
-  1,  // LEFT
-  4,  // MIDDLE
-  2   // RIGHT
-];
-
-
-/**
- * Accepts a browser event object and creates a patched, cross browser event
- * object.
- * @param {Event} e Browser event object.
- * @param {EventTarget=} opt_currentTarget Current target for event.
- */
-goog.events.BrowserEvent.prototype.init = function(e, opt_currentTarget) {
-  var type = this.type = e.type;
-
-  /**
-   * On touch devices use the first "changed touch" as the relevant touch.
-   * @type {Touch}
-   */
-  var relevantTouch = e.changedTouches ? e.changedTouches[0] : null;
-
-  // TODO(nicksantos): Change this.target to type EventTarget.
-  this.target = /** @type {Node} */ (e.target) || e.srcElement;
-
-  // TODO(nicksantos): Change this.currentTarget to type EventTarget.
-  this.currentTarget = /** @type {Node} */ (opt_currentTarget);
-
-  var relatedTarget = /** @type {Node} */ (e.relatedTarget);
-  if (relatedTarget) {
-    // There's a bug in FireFox where sometimes, relatedTarget will be a
-    // chrome element, and accessing any property of it will get a permission
-    // denied exception. See:
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=497780
-    if (goog.userAgent.GECKO) {
-      if (!goog.reflect.canAccessProperty(relatedTarget, 'nodeName')) {
-        relatedTarget = null;
-      }
-    }
-    // TODO(arv): Use goog.events.EventType when it has been refactored into its
-    // own file.
-  } else if (type == goog.events.EventType.MOUSEOVER) {
-    relatedTarget = e.fromElement;
-  } else if (type == goog.events.EventType.MOUSEOUT) {
-    relatedTarget = e.toElement;
-  }
-
-  this.relatedTarget = relatedTarget;
-
-  if (!goog.isNull(relevantTouch)) {
-    this.clientX = relevantTouch.clientX !== undefined ? relevantTouch.clientX :
-                                                         relevantTouch.pageX;
-    this.clientY = relevantTouch.clientY !== undefined ? relevantTouch.clientY :
-                                                         relevantTouch.pageY;
-    this.screenX = relevantTouch.screenX || 0;
-    this.screenY = relevantTouch.screenY || 0;
-  } else {
-    // Webkit emits a lame warning whenever layerX/layerY is accessed.
-    // http://code.google.com/p/chromium/issues/detail?id=101733
-    this.offsetX = (goog.userAgent.WEBKIT || e.offsetX !== undefined) ?
-        e.offsetX :
-        e.layerX;
-    this.offsetY = (goog.userAgent.WEBKIT || e.offsetY !== undefined) ?
-        e.offsetY :
-        e.layerY;
-    this.clientX = e.clientX !== undefined ? e.clientX : e.pageX;
-    this.clientY = e.clientY !== undefined ? e.clientY : e.pageY;
-    this.screenX = e.screenX || 0;
-    this.screenY = e.screenY || 0;
-  }
-
-  this.button = e.button;
-
-  this.keyCode = e.keyCode || 0;
-  this.charCode = e.charCode || (type == 'keypress' ? e.keyCode : 0);
-  this.ctrlKey = e.ctrlKey;
-  this.altKey = e.altKey;
-  this.shiftKey = e.shiftKey;
-  this.metaKey = e.metaKey;
-  this.platformModifierKey = goog.userAgent.MAC ? e.metaKey : e.ctrlKey;
-  this.state = e.state;
-  this.event_ = e;
-  if (e.defaultPrevented) {
-    this.preventDefault();
-  }
-};
-
-
-/**
- * Tests to see which button was pressed during the event. This is really only
- * useful in IE and Gecko browsers. And in IE, it's only useful for
- * mousedown/mouseup events, because click only fires for the left mouse button.
- *
- * Safari 2 only reports the left button being clicked, and uses the value '1'
- * instead of 0. Opera only reports a mousedown event for the middle button, and
- * no mouse events for the right button. Opera has default behavior for left and
- * middle click that can only be overridden via a configuration setting.
- *
- * There's a nice table of this mess at http://www.unixpapa.com/js/mouse.html.
- *
- * @param {goog.events.BrowserEvent.MouseButton} button The button
- *     to test for.
- * @return {boolean} True if button was pressed.
- */
-goog.events.BrowserEvent.prototype.isButton = function(button) {
-  if (!goog.events.BrowserFeature.HAS_W3C_BUTTON) {
-    if (this.type == 'click') {
-      return button == goog.events.BrowserEvent.MouseButton.LEFT;
-    } else {
-      return !!(
-          this.event_.button & goog.events.BrowserEvent.IEButtonMap[button]);
-    }
-  } else {
-    return this.event_.button == button;
-  }
-};
-
-
-/**
- * Whether this has an "action"-producing mouse button.
- *
- * By definition, this includes left-click on windows/linux, and left-click
- * without the ctrl key on Macs.
- *
- * @return {boolean} The result.
- */
-goog.events.BrowserEvent.prototype.isMouseActionButton = function() {
-  // Webkit does not ctrl+click to be a right-click, so we
-  // normalize it to behave like Gecko and Opera.
-  return this.isButton(goog.events.BrowserEvent.MouseButton.LEFT) &&
-      !(goog.userAgent.WEBKIT && goog.userAgent.MAC && this.ctrlKey);
-};
-
-
-/**
- * @override
- */
-goog.events.BrowserEvent.prototype.stopPropagation = function() {
-  goog.events.BrowserEvent.superClass_.stopPropagation.call(this);
-  if (this.event_.stopPropagation) {
-    this.event_.stopPropagation();
-  } else {
-    this.event_.cancelBubble = true;
-  }
-};
-
-
-/**
- * @override
- */
-goog.events.BrowserEvent.prototype.preventDefault = function() {
-  goog.events.BrowserEvent.superClass_.preventDefault.call(this);
-  var be = this.event_;
-  if (!be.preventDefault) {
-    be.returnValue = false;
-    if (goog.events.BrowserFeature.SET_KEY_CODE_TO_PREVENT_DEFAULT) {
-      /** @preserveTry */
-      try {
-        // Most keys can be prevented using returnValue. Some special keys
-        // require setting the keyCode to -1 as well:
-        //
-        // In IE7:
-        // F3, F5, F10, F11, Ctrl+P, Crtl+O, Ctrl+F (these are taken from IE6)
-        //
-        // In IE8:
-        // Ctrl+P, Crtl+O, Ctrl+F (F1-F12 cannot be stopped through the event)
-        //
-        // We therefore do this for all function keys as well as when Ctrl key
-        // is pressed.
-        var VK_F1 = 112;
-        var VK_F12 = 123;
-        if (be.ctrlKey || be.keyCode >= VK_F1 && be.keyCode <= VK_F12) {
-          be.keyCode = -1;
-        }
-      } catch (ex) {
-        // IE throws an 'access denied' exception when trying to change
-        // keyCode in some situations (e.g. srcElement is input[type=file],
-        // or srcElement is an anchor tag rewritten by parent's innerHTML).
-        // Do nothing in this case.
-      }
-    }
-  } else {
-    be.preventDefault();
-  }
-};
-
-
-/**
- * @return {Event} The underlying browser event object.
- */
-goog.events.BrowserEvent.prototype.getBrowserEvent = function() {
-  return this.event_;
-};
-
-// Copyright 2012 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview An interface for a listenable JavaScript object.
- * @author chrishenry@google.com (Chris Henry)
- */
-
-goog.provide('goog.events.Listenable');
-goog.provide('goog.events.ListenableKey');
-
-/** @suppress {extraRequire} */
-goog.require('goog.events.EventId');
-
-goog.forwardDeclare('goog.events.EventLike');
-goog.forwardDeclare('goog.events.EventTarget');
-
-
-
-/**
- * A listenable interface. A listenable is an object with the ability
- * to dispatch/broadcast events to "event listeners" registered via
- * listen/listenOnce.
- *
- * The interface allows for an event propagation mechanism similar
- * to one offered by native browser event targets, such as
- * capture/bubble mechanism, stopping propagation, and preventing
- * default actions. Capture/bubble mechanism depends on the ancestor
- * tree constructed via {@code #getParentEventTarget}; this tree
- * must be directed acyclic graph. The meaning of default action(s)
- * in preventDefault is specific to a particular use case.
- *
- * Implementations that do not support capture/bubble or can not have
- * a parent listenable can simply not implement any ability to set the
- * parent listenable (and have {@code #getParentEventTarget} return
- * null).
- *
- * Implementation of this class can be used with or independently from
- * goog.events.
- *
- * Implementation must call {@code #addImplementation(implClass)}.
- *
- * @interface
- * @see goog.events
- * @see http://www.w3.org/TR/DOM-Level-2-Events/events.html
- */
-goog.events.Listenable = function() {};
-
-
-/**
- * An expando property to indicate that an object implements
- * goog.events.Listenable.
- *
- * See addImplementation/isImplementedBy.
- *
- * @type {string}
- * @const
- */
-goog.events.Listenable.IMPLEMENTED_BY_PROP =
-    'closure_listenable_' + ((Math.random() * 1e6) | 0);
-
-
-/**
- * Marks a given class (constructor) as an implementation of
- * Listenable, do that we can query that fact at runtime. The class
- * must have already implemented the interface.
- * @param {!Function} cls The class constructor. The corresponding
- *     class must have already implemented the interface.
- */
-goog.events.Listenable.addImplementation = function(cls) {
-  cls.prototype[goog.events.Listenable.IMPLEMENTED_BY_PROP] = true;
-};
-
-
-/**
- * @param {Object} obj The object to check.
- * @return {boolean} Whether a given instance implements Listenable. The
- *     class/superclass of the instance must call addImplementation.
- */
-goog.events.Listenable.isImplementedBy = function(obj) {
-  return !!(obj && obj[goog.events.Listenable.IMPLEMENTED_BY_PROP]);
-};
-
-
-/**
- * Adds an event listener. A listener can only be added once to an
- * object and if it is added again the key for the listener is
- * returned. Note that if the existing listener is a one-off listener
- * (registered via listenOnce), it will no longer be a one-off
- * listener after a call to listen().
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
- * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
- *     method.
- * @param {boolean=} opt_useCapture Whether to fire in capture phase
- *     (defaults to false).
- * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {!goog.events.ListenableKey} Unique key for the listener.
- * @template SCOPE,EVENTOBJ
- */
-goog.events.Listenable.prototype.listen;
-
-
-/**
- * Adds an event listener that is removed automatically after the
- * listener fired once.
- *
- * If an existing listener already exists, listenOnce will do
- * nothing. In particular, if the listener was previously registered
- * via listen(), listenOnce() will not turn the listener into a
- * one-off listener. Similarly, if there is already an existing
- * one-off listener, listenOnce does not modify the listeners (it is
- * still a once listener).
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
- * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
- *     method.
- * @param {boolean=} opt_useCapture Whether to fire in capture phase
- *     (defaults to false).
- * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {!goog.events.ListenableKey} Unique key for the listener.
- * @template SCOPE,EVENTOBJ
- */
-goog.events.Listenable.prototype.listenOnce;
-
-
-/**
- * Removes an event listener which was added with listen() or listenOnce().
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>} type The event type id.
- * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener Callback
- *     method.
- * @param {boolean=} opt_useCapture Whether to fire in capture phase
- *     (defaults to false).
- * @param {SCOPE=} opt_listenerScope Object in whose scope to call
- *     the listener.
- * @return {boolean} Whether any listener was removed.
- * @template SCOPE,EVENTOBJ
- */
-goog.events.Listenable.prototype.unlisten;
-
-
-/**
- * Removes an event listener which was added with listen() by the key
- * returned by listen().
- *
- * @param {!goog.events.ListenableKey} key The key returned by
- *     listen() or listenOnce().
- * @return {boolean} Whether any listener was removed.
- */
-goog.events.Listenable.prototype.unlistenByKey;
-
-
-/**
- * Dispatches an event (or event like object) and calls all listeners
- * listening for events of this type. The type of the event is decided by the
- * type property on the event object.
- *
- * If any of the listeners returns false OR calls preventDefault then this
- * function will return false.  If one of the capture listeners calls
- * stopPropagation, then the bubble listeners won't fire.
- *
- * @param {goog.events.EventLike} e Event object.
- * @return {boolean} If anyone called preventDefault on the event object (or
- *     if any of the listeners returns false) this will also return false.
- */
-goog.events.Listenable.prototype.dispatchEvent;
-
-
-/**
- * Removes all listeners from this listenable. If type is specified,
- * it will only remove listeners of the particular type. otherwise all
- * registered listeners will be removed.
- *
- * @param {string=} opt_type Type of event to remove, default is to
- *     remove all types.
- * @return {number} Number of listeners removed.
- */
-goog.events.Listenable.prototype.removeAllListeners;
-
-
-/**
- * Returns the parent of this event target to use for capture/bubble
- * mechanism.
- *
- * NOTE(chrishenry): The name reflects the original implementation of
- * custom event target ({@code goog.events.EventTarget}). We decided
- * that changing the name is not worth it.
- *
- * @return {goog.events.Listenable} The parent EventTarget or null if
- *     there is no parent.
- */
-goog.events.Listenable.prototype.getParentEventTarget;
-
-
-/**
- * Fires all registered listeners in this listenable for the given
- * type and capture mode, passing them the given eventObject. This
- * does not perform actual capture/bubble. Only implementors of the
- * interface should be using this.
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>} type The type of the
- *     listeners to fire.
- * @param {boolean} capture The capture mode of the listeners to fire.
- * @param {EVENTOBJ} eventObject The event object to fire.
- * @return {boolean} Whether all listeners succeeded without
- *     attempting to prevent default behavior. If any listener returns
- *     false or called goog.events.Event#preventDefault, this returns
- *     false.
- * @template EVENTOBJ
- */
-goog.events.Listenable.prototype.fireListeners;
-
-
-/**
- * Gets all listeners in this listenable for the given type and
- * capture mode.
- *
- * @param {string|!goog.events.EventId} type The type of the listeners to fire.
- * @param {boolean} capture The capture mode of the listeners to fire.
- * @return {!Array<!goog.events.ListenableKey>} An array of registered
- *     listeners.
- * @template EVENTOBJ
- */
-goog.events.Listenable.prototype.getListeners;
-
-
-/**
- * Gets the goog.events.ListenableKey for the event or null if no such
- * listener is in use.
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>} type The name of the event
- *     without the 'on' prefix.
- * @param {function(this:SCOPE, EVENTOBJ):(boolean|undefined)} listener The
- *     listener function to get.
- * @param {boolean} capture Whether the listener is a capturing listener.
- * @param {SCOPE=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {goog.events.ListenableKey} the found listener or null if not found.
- * @template SCOPE,EVENTOBJ
- */
-goog.events.Listenable.prototype.getListener;
-
-
-/**
- * Whether there is any active listeners matching the specified
- * signature. If either the type or capture parameters are
- * unspecified, the function will match on the remaining criteria.
- *
- * @param {string|!goog.events.EventId<EVENTOBJ>=} opt_type Event type.
- * @param {boolean=} opt_capture Whether to check for capture or bubble
- *     listeners.
- * @return {boolean} Whether there is any active listeners matching
- *     the requested type and/or capture phase.
- * @template EVENTOBJ
- */
-goog.events.Listenable.prototype.hasListener;
-
-
-
-/**
- * An interface that describes a single registered listener.
- * @interface
- */
-goog.events.ListenableKey = function() {};
-
-
-/**
- * Counter used to create a unique key
- * @type {number}
- * @private
- */
-goog.events.ListenableKey.counter_ = 0;
-
-
-/**
- * Reserves a key to be used for ListenableKey#key field.
- * @return {number} A number to be used to fill ListenableKey#key
- *     field.
- */
-goog.events.ListenableKey.reserveKey = function() {
-  return ++goog.events.ListenableKey.counter_;
-};
-
-
-/**
- * The source event target.
- * @type {Object|goog.events.Listenable|goog.events.EventTarget}
- */
-goog.events.ListenableKey.prototype.src;
-
-
-/**
- * The event type the listener is listening to.
- * @type {string}
- */
-goog.events.ListenableKey.prototype.type;
-
-
-/**
- * The listener function.
- * @type {function(?):?|{handleEvent:function(?):?}|null}
- */
-goog.events.ListenableKey.prototype.listener;
-
-
-/**
- * Whether the listener works on capture phase.
- * @type {boolean}
- */
-goog.events.ListenableKey.prototype.capture;
-
-
-/**
- * The 'this' object for the listener function's scope.
- * @type {Object|undefined}
- */
-goog.events.ListenableKey.prototype.handler;
-
-
-/**
- * A globally unique number to identify the key.
- * @type {number}
- */
-goog.events.ListenableKey.prototype.key;
-
-// Copyright 2005 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview Listener object.
- * @see ../demos/events.html
- */
-
-goog.provide('goog.events.Listener');
-
-goog.require('goog.events.ListenableKey');
-
-
-
-/**
- * Simple class that stores information about a listener
- * @param {!Function} listener Callback function.
- * @param {Function} proxy Wrapper for the listener that patches the event.
- * @param {EventTarget|goog.events.Listenable} src Source object for
- *     the event.
- * @param {string} type Event type.
- * @param {boolean} capture Whether in capture or bubble phase.
- * @param {Object=} opt_handler Object in whose context to execute the callback.
- * @implements {goog.events.ListenableKey}
- * @constructor
- */
-goog.events.Listener = function(
-    listener, proxy, src, type, capture, opt_handler) {
-  if (goog.events.Listener.ENABLE_MONITORING) {
-    this.creationStack = new Error().stack;
-  }
-
-  /**
-   * Callback function.
-   * @type {Function}
-   */
-  this.listener = listener;
-
-  /**
-   * A wrapper over the original listener. This is used solely to
-   * handle native browser events (it is used to simulate the capture
-   * phase and to patch the event object).
-   * @type {Function}
-   */
-  this.proxy = proxy;
-
-  /**
-   * Object or node that callback is listening to
-   * @type {EventTarget|goog.events.Listenable}
-   */
-  this.src = src;
-
-  /**
-   * The event type.
-   * @const {string}
-   */
-  this.type = type;
-
-  /**
-   * Whether the listener is being called in the capture or bubble phase
-   * @const {boolean}
-   */
-  this.capture = !!capture;
-
-  /**
-   * Optional object whose context to execute the listener in
-   * @type {Object|undefined}
-   */
-  this.handler = opt_handler;
-
-  /**
-   * The key of the listener.
-   * @const {number}
-   * @override
-   */
-  this.key = goog.events.ListenableKey.reserveKey();
-
-  /**
-   * Whether to remove the listener after it has been called.
-   * @type {boolean}
-   */
-  this.callOnce = false;
-
-  /**
-   * Whether the listener has been removed.
-   * @type {boolean}
-   */
-  this.removed = false;
-};
-
-
-/**
- * @define {boolean} Whether to enable the monitoring of the
- *     goog.events.Listener instances. Switching on the monitoring is only
- *     recommended for debugging because it has a significant impact on
- *     performance and memory usage. If switched off, the monitoring code
- *     compiles down to 0 bytes.
- */
-goog.define('goog.events.Listener.ENABLE_MONITORING', false);
-
-
-/**
- * If monitoring the goog.events.Listener instances is enabled, stores the
- * creation stack trace of the Disposable instance.
- * @type {string}
- */
-goog.events.Listener.prototype.creationStack;
-
-
-/**
- * Marks this listener as removed. This also remove references held by
- * this listener object (such as listener and event source).
- */
-goog.events.Listener.prototype.markAsRemoved = function() {
-  this.removed = true;
-  this.listener = null;
-  this.proxy = null;
-  this.src = null;
-  this.handler = null;
-};
-
-// Copyright 2013 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview A map of listeners that provides utility functions to
- * deal with listeners on an event target. Used by
- * {@code goog.events.EventTarget}.
- *
- * WARNING: Do not use this class from outside goog.events package.
- *
- * @visibility {//closure/goog/bin/sizetests:__pkg__}
- * @visibility {//closure/goog/events:__pkg__}
- * @visibility {//closure/goog/labs/events:__pkg__}
- */
-
-goog.provide('goog.events.ListenerMap');
-
-goog.require('goog.array');
-goog.require('goog.events.Listener');
-goog.require('goog.object');
-
-
-
-/**
- * Creates a new listener map.
- * @param {EventTarget|goog.events.Listenable} src The src object.
- * @constructor
- * @final
- */
-goog.events.ListenerMap = function(src) {
-  /** @type {EventTarget|goog.events.Listenable} */
-  this.src = src;
-
-  /**
-   * Maps of event type to an array of listeners.
-   * @type {!Object<string, !Array<!goog.events.Listener>>}
-   */
-  this.listeners = {};
-
-  /**
-   * The count of types in this map that have registered listeners.
-   * @private {number}
-   */
-  this.typeCount_ = 0;
-};
-
-
-/**
- * @return {number} The count of event types in this map that actually
- *     have registered listeners.
- */
-goog.events.ListenerMap.prototype.getTypeCount = function() {
-  return this.typeCount_;
-};
-
-
-/**
- * @return {number} Total number of registered listeners.
- */
-goog.events.ListenerMap.prototype.getListenerCount = function() {
-  var count = 0;
-  for (var type in this.listeners) {
-    count += this.listeners[type].length;
-  }
-  return count;
-};
-
-
-/**
- * Adds an event listener. A listener can only be added once to an
- * object and if it is added again the key for the listener is
- * returned.
- *
- * Note that a one-off listener will not change an existing listener,
- * if any. On the other hand a normal listener will change existing
- * one-off listener to become a normal listener.
- *
- * @param {string|!goog.events.EventId} type The listener event type.
- * @param {!Function} listener This listener callback method.
- * @param {boolean} callOnce Whether the listener is a one-off
- *     listener.
- * @param {boolean=} opt_useCapture The capture mode of the listener.
- * @param {Object=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {!goog.events.ListenableKey} Unique key for the listener.
- */
-goog.events.ListenerMap.prototype.add = function(
-    type, listener, callOnce, opt_useCapture, opt_listenerScope) {
-  var typeStr = type.toString();
-  var listenerArray = this.listeners[typeStr];
-  if (!listenerArray) {
-    listenerArray = this.listeners[typeStr] = [];
-    this.typeCount_++;
-  }
-
-  var listenerObj;
-  var index = goog.events.ListenerMap.findListenerIndex_(
-      listenerArray, listener, opt_useCapture, opt_listenerScope);
-  if (index > -1) {
-    listenerObj = listenerArray[index];
-    if (!callOnce) {
-      // Ensure that, if there is an existing callOnce listener, it is no
-      // longer a callOnce listener.
-      listenerObj.callOnce = false;
-    }
-  } else {
-    listenerObj = new goog.events.Listener(
-        listener, null, this.src, typeStr, !!opt_useCapture, opt_listenerScope);
-    listenerObj.callOnce = callOnce;
-    listenerArray.push(listenerObj);
-  }
-  return listenerObj;
-};
-
-
-/**
- * Removes a matching listener.
- * @param {string|!goog.events.EventId} type The listener event type.
- * @param {!Function} listener This listener callback method.
- * @param {boolean=} opt_useCapture The capture mode of the listener.
- * @param {Object=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {boolean} Whether any listener was removed.
- */
-goog.events.ListenerMap.prototype.remove = function(
-    type, listener, opt_useCapture, opt_listenerScope) {
-  var typeStr = type.toString();
-  if (!(typeStr in this.listeners)) {
-    return false;
-  }
-
-  var listenerArray = this.listeners[typeStr];
-  var index = goog.events.ListenerMap.findListenerIndex_(
-      listenerArray, listener, opt_useCapture, opt_listenerScope);
-  if (index > -1) {
-    var listenerObj = listenerArray[index];
-    listenerObj.markAsRemoved();
-    goog.array.removeAt(listenerArray, index);
-    if (listenerArray.length == 0) {
-      delete this.listeners[typeStr];
-      this.typeCount_--;
-    }
-    return true;
-  }
-  return false;
-};
-
-
-/**
- * Removes the given listener object.
- * @param {!goog.events.ListenableKey} listener The listener to remove.
- * @return {boolean} Whether the listener is removed.
- */
-goog.events.ListenerMap.prototype.removeByKey = function(listener) {
-  var type = listener.type;
-  if (!(type in this.listeners)) {
-    return false;
-  }
-
-  var removed = goog.array.remove(this.listeners[type], listener);
-  if (removed) {
-    listener.markAsRemoved();
-    if (this.listeners[type].length == 0) {
-      delete this.listeners[type];
-      this.typeCount_--;
-    }
-  }
-  return removed;
-};
-
-
-/**
- * Removes all listeners from this map. If opt_type is provided, only
- * listeners that match the given type are removed.
- * @param {string|!goog.events.EventId=} opt_type Type of event to remove.
- * @return {number} Number of listeners removed.
- */
-goog.events.ListenerMap.prototype.removeAll = function(opt_type) {
-  var typeStr = opt_type && opt_type.toString();
-  var count = 0;
-  for (var type in this.listeners) {
-    if (!typeStr || type == typeStr) {
-      var listenerArray = this.listeners[type];
-      for (var i = 0; i < listenerArray.length; i++) {
-        ++count;
-        listenerArray[i].markAsRemoved();
-      }
-      delete this.listeners[type];
-      this.typeCount_--;
-    }
-  }
-  return count;
-};
-
-
-/**
- * Gets all listeners that match the given type and capture mode. The
- * returned array is a copy (but the listener objects are not).
- * @param {string|!goog.events.EventId} type The type of the listeners
- *     to retrieve.
- * @param {boolean} capture The capture mode of the listeners to retrieve.
- * @return {!Array<!goog.events.ListenableKey>} An array of matching
- *     listeners.
- */
-goog.events.ListenerMap.prototype.getListeners = function(type, capture) {
-  var listenerArray = this.listeners[type.toString()];
-  var rv = [];
-  if (listenerArray) {
-    for (var i = 0; i < listenerArray.length; ++i) {
-      var listenerObj = listenerArray[i];
-      if (listenerObj.capture == capture) {
-        rv.push(listenerObj);
-      }
-    }
-  }
-  return rv;
-};
-
-
-/**
- * Gets the goog.events.ListenableKey for the event or null if no such
- * listener is in use.
- *
- * @param {string|!goog.events.EventId} type The type of the listener
- *     to retrieve.
- * @param {!Function} listener The listener function to get.
- * @param {boolean} capture Whether the listener is a capturing listener.
- * @param {Object=} opt_listenerScope Object in whose scope to call the
- *     listener.
- * @return {goog.events.ListenableKey} the found listener or null if not found.
- */
-goog.events.ListenerMap.prototype.getListener = function(
-    type, listener, capture, opt_listenerScope) {
-  var listenerArray = this.listeners[type.toString()];
-  var i = -1;
-  if (listenerArray) {
-    i = goog.events.ListenerMap.findListenerIndex_(
-        listenerArray, listener, capture, opt_listenerScope);
-  }
-  return i > -1 ? listenerArray[i] : null;
-};
-
-
-/**
- * Whether there is a matching listener. If either the type or capture
- * parameters are unspecified, the function will match on the
- * remaining criteria.
- *
- * @param {string|!goog.events.EventId=} opt_type The type of the listener.
- * @param {boolean=} opt_capture The capture mode of the listener.
- * @return {boolean} Whether there is an active listener matching
- *     the requested type and/or capture phase.
- */
-goog.events.ListenerMap.prototype.hasListener = function(
-    opt_type, opt_capture) {
-  var hasType = goog.isDef(opt_type);
-  var typeStr = hasType ? opt_type.toString() : '';
-  var hasCapture = goog.isDef(opt_capture);
-
-  return goog.object.some(this.listeners, function(listenerArray, type) {
-    for (var i = 0; i < listenerArray.length; ++i) {
-      if ((!hasType || listenerArray[i].type == typeStr) &&
-          (!hasCapture || listenerArray[i].capture == opt_capture)) {
-        return true;
-      }
-    }
-
-    return false;
-  });
-};
-
-
-/**
- * Finds the index of a matching goog.events.Listener in the given
- * listenerArray.
- * @param {!Array<!goog.events.Listener>} listenerArray Array of listener.
- * @param {!Function} listener The listener function.
- * @param {boolean=} opt_useCapture The capture flag for the listener.
- * @param {Object=} opt_listenerScope The listener scope.
- * @return {number} The index of the matching listener within the
- *     listenerArray.
- * @private
- */
-goog.events.ListenerMap.findListenerIndex_ = function(
-    listenerArray, listener, opt_useCapture, opt_listenerScope) {
-  for (var i = 0; i < listenerArray.length; ++i) {
-    var listenerObj = listenerArray[i];
-    if (!listenerObj.removed && listenerObj.listener == listener &&
-        listenerObj.capture == !!opt_useCapture &&
-        listenerObj.handler == opt_listenerScope) {
-      return i;
-    }
-  }
-  return -1;
-};
-
-// Copyright 2005 The Closure Library Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS-IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @fileoverview An event manager for both native browser event
- * targets and custom JavaScript event targets
- * ({@code goog.events.Listenable}). This provides an abstraction
- * over browsers' event systems.
- *
- * It also provides a simulation of W3C event model's capture phase in
- * Internet Explorer (IE 8 and below). Caveat: the simulation does not
- * interact well with listeners registered directly on the elements
- * (bypassing goog.events) or even with listeners registered via
- * goog.events in a separate JS binary. In these cases, we provide
- * no ordering guarantees.
- *
- * The listeners will receive a "patched" event object. Such event object
- * contains normalized values for certain event properties that differs in
- * different browsers.
- *
- * Example usage:
- * <pre>
- * goog.events.listen(myNode, 'click', function(e) { alert('woo') });
- * goog.events.listen(myNode, 'mouseover', mouseHandler, true);
- * goog.events.unlisten(myNode, 'mouseover', mouseHandler, true);
- * goog.events.removeAll(myNode);
- * </pre>
- *
- *                                            in IE and event object patching]
- * @author arv@google.com (Erik Arvidsson)
- *
- * @see ../demos/events.html
- * @see ../demos/event-propagation.html
- * @see ../demos/stopevent.html
- */
-
-// IMPLEMENTATION NOTES:
-// goog.events stores an auxiliary data structure on each EventTarget
-// source being listened on. This allows us to take advantage of GC,
-// having the data structure GC'd when the EventTarget is GC'd. This
-// GC behavior is equivalent to using W3C DOM Events directly.
-
-goog.provide('goog.events');
-goog.provide('goog.events.CaptureSimulationMode');
-goog.provide('goog.events.Key');
-goog.provide('goog.events.ListenableType');
-
-goog.require('goog.asserts');
-goog.require('goog.debug.entryPointRegistry');
-goog.require('goog.events.BrowserEvent');
-goog.require('goog.events.BrowserFeature');
-goog.require('goog.events.Listenable');
-goog.require('goog.events.ListenerMap');
-
-goog.forwardDeclare('goog.debug.ErrorHandler');
-goog.forwardDeclare('goog.events.EventWrapper');
-
-
-/**
- * @typedef {number|goog.events.ListenableKey}
- */
-goog.events.Key;
-
-
-/**
- * @typedef {EventTarget|goog.events.Listenable}
- */
-goog.events.ListenableType;
-
-
-/**
- * Property name on a native event target for the listener map
- * associated with the event target.
- * @private @const {string}
- */
-goog.events.LISTENER_MAP_PROP_ = 'closure_lm_' + ((Math.random() * 1e6) | 0);
-
-
-/**
- * String used to prepend to IE event types.
- * @const
- * @private
- */
-goog.events.onString_ = 'on';
-
-
-/**
- * Map of computed "on<eventname>" strings for IE event types. Caching
- * this removes an extra object allocation in goog.events.listen which
- * improves IE6 performance.
- * @const
- * @dict
- * @private
- */
-goog.events.onStringMap_ = {};
-
-
-/**
- * @enum {number} Different capture simulation mode for IE8-.
- */
-goog.events.CaptureSimulationMode = {
-  /**
-   * Does not perform capture simulation. Will asserts in IE8- when you
-   * add capture listeners.
-   */
-  OFF_AND_FAIL: 0,
-
-  /**
-   * Does not perform capture simulation, silently ignore capture
-   * listeners.
-   */
-  OFF_AND_SILENT: 1,
-
-  /**
-   * Performs capture simulation.
-   */
-  ON: 2
-};
-
-
-/**
- * @define {number} The capture simulation mode for IE8-. By default,
- *     this is ON.
- */
-goog.define('goog.events.CAPTURE_SIMULATION_MODE', 2);
-
-
-/**
- * Estimated count of total native listeners.
- * @private {number}
- */
-goog.events.listenerCountEstimate_ = 0;
-
-
-/**
- * Adds an event listener for a specific event on a native event
- * target (such as a DOM element) or an object that has implemented
- * {@link goog.events.Listenable}. A listener can only be added once
- * to an object and if it is added again the key for the listener is
- * returned. Note that if the existing listener is a one-off listener
- * (registered via listenOnce), it will no longer be a one-off
- * listener after a call to listen().
- *
- * @param {EventTarget|goog.events.Listenable} src The node to listen
- *     to events on.
- * @param {string|Array<string>|
- *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
- *     type Event type or array of event types.
- * @param {function(this:T, EVENTOBJ):?|{handleEvent:function(?):?}|null}
- *     listener Callback method, or an object with a handleEvent function.
- *     WARNING: passing an Object is now softly deprecated.
- * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
- *     false).
- * @param {T=} opt_handler Element in whose scope to call the listener.
- * @return {goog.events.Key} Unique key for the listener.
- * @template T,EVENTOBJ
- */
-goog.events.listen = function(src, type, listener, opt_capt, opt_handler) {
-  if (goog.isArray(type)) {
-    for (var i = 0; i < type.length; i++) {
-      goog.events.listen(src, type[i], listener, opt_capt, opt_handler);
-    }
-    return null;
-  }
-
-  listener = goog.events.wrapListener(listener);
-  if (goog.events.Listenable.isImplementedBy(src)) {
-    return src.listen(
-        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
-        opt_handler);
-  } else {
-    return goog.events.listen_(
-        /** @type {!EventTarget} */ (src),
-        /** @type {string|!goog.events.EventId} */ (type), listener,
-        /* callOnce */ false, opt_capt, opt_handler);
-  }
-};
-
-
-/**
- * Adds an event listener for a specific event on a native event
- * target. A listener can only be added once to an object and if it
- * is added again the key for the listener is returned.
- *
- * Note that a one-off listener will not change an existing listener,
- * if any. On the other hand a normal listener will change existing
- * one-off listener to become a normal listener.
- *
- * @param {EventTarget} src The node to listen to events on.
- * @param {string|!goog.events.EventId} type Event type.
- * @param {!Function} listener Callback function.
- * @param {boolean} callOnce Whether the listener is a one-off
- *     listener or otherwise.
- * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
- *     false).
- * @param {Object=} opt_handler Element in whose scope to call the listener.
- * @return {goog.events.ListenableKey} Unique key for the listener.
- * @private
- */
-goog.events.listen_ = function(
-    src, type, listener, callOnce, opt_capt, opt_handler) {
-  if (!type) {
-    throw Error('Invalid event type');
-  }
-
-  var capture = !!opt_capt;
-  if (capture && !goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT) {
-    if (goog.events.CAPTURE_SIMULATION_MODE ==
-        goog.events.CaptureSimulationMode.OFF_AND_FAIL) {
-      goog.asserts.fail('Can not register capture listener in IE8-.');
-      return null;
-    } else if (
-        goog.events.CAPTURE_SIMULATION_MODE ==
-        goog.events.CaptureSimulationMode.OFF_AND_SILENT) {
-      return null;
-    }
-  }
-
-  var listenerMap = goog.events.getListenerMap_(src);
-  if (!listenerMap) {
-    src[goog.events.LISTENER_MAP_PROP_] = listenerMap =
-        new goog.events.ListenerMap(src);
-  }
-
-  var listenerObj =
-      listenerMap.add(type, listener, callOnce, opt_capt, opt_handler);
-
-  // If the listenerObj already has a proxy, it has been set up
-  // previously. We simply return.
-  if (listenerObj.proxy) {
-    return listenerObj;
-  }
-
-  var proxy = goog.events.getProxy();
-  listenerObj.proxy = proxy;
-
-  proxy.src = src;
-  proxy.listener = listenerObj;
-
-  // Attach the proxy through the browser's API
-  if (src.addEventListener) {
-    src.addEventListener(type.toString(), proxy, capture);
-  } else if (src.attachEvent) {
-    // The else if above used to be an unconditional else. It would call
-    // exception on IE11, spoiling the day of some callers. The previous
-    // incarnation of this code, from 2007, indicates that it replaced an
-    // earlier still version that caused excess allocations on IE6.
-    src.attachEvent(goog.events.getOnString_(type.toString()), proxy);
-  } else {
-    throw Error('addEventListener and attachEvent are unavailable.');
-  }
-
-  goog.events.listenerCountEstimate_++;
-  return listenerObj;
-};
-
-
-/**
- * Helper function for returning a proxy function.
- * @return {!Function} A new or reused function object.
- */
-goog.events.getProxy = function() {
-  var proxyCallbackFunction = goog.events.handleBrowserEvent_;
-  // Use a local var f to prevent one allocation.
-  var f =
-      goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT ? function(eventObject) {
-        return proxyCallbackFunction.call(f.src, f.listener, eventObject);
-      } : function(eventObject) {
-        var v = proxyCallbackFunction.call(f.src, f.listener, eventObject);
-        // NOTE(chrishenry): In IE, we hack in a capture phase. However, if
-        // there is inline event handler which tries to prevent default (for
-        // example <a href="..." onclick="return false">...</a>) in a
-        // descendant element, the prevent default will be overridden
-        // by this listener if this listener were to return true. Hence, we
-        // return undefined.
-        if (!v) return v;
-      };
-  return f;
-};
-
-
-/**
- * Adds an event listener for a specific event on a native event
- * target (such as a DOM element) or an object that has implemented
- * {@link goog.events.Listenable}. After the event has fired the event
- * listener is removed from the target.
- *
- * If an existing listener already exists, listenOnce will do
- * nothing. In particular, if the listener was previously registered
- * via listen(), listenOnce() will not turn the listener into a
- * one-off listener. Similarly, if there is already an existing
- * one-off listener, listenOnce does not modify the listeners (it is
- * still a once listener).
- *
- * @param {EventTarget|goog.events.Listenable} src The node to listen
- *     to events on.
- * @param {string|Array<string>|
- *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
- *     type Event type or array of event types.
- * @param {function(this:T, EVENTOBJ):?|{handleEvent:function(?):?}|null}
- *     listener Callback method.
- * @param {boolean=} opt_capt Fire in capture phase?.
- * @param {T=} opt_handler Element in whose scope to call the listener.
- * @return {goog.events.Key} Unique key for the listener.
- * @template T,EVENTOBJ
- */
-goog.events.listenOnce = function(src, type, listener, opt_capt, opt_handler) {
-  if (goog.isArray(type)) {
-    for (var i = 0; i < type.length; i++) {
-      goog.events.listenOnce(src, type[i], listener, opt_capt, opt_handler);
-    }
-    return null;
-  }
-
-  listener = goog.events.wrapListener(listener);
-  if (goog.events.Listenable.isImplementedBy(src)) {
-    return src.listenOnce(
-        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
-        opt_handler);
-  } else {
-    return goog.events.listen_(
-        /** @type {!EventTarget} */ (src),
-        /** @type {string|!goog.events.EventId} */ (type), listener,
-        /* callOnce */ true, opt_capt, opt_handler);
-  }
-};
-
-
-/**
- * Adds an event listener with a specific event wrapper on a DOM Node or an
- * object that has implemented {@link goog.events.Listenable}. A listener can
- * only be added once to an object.
- *
- * @param {EventTarget|goog.events.Listenable} src The target to
- *     listen to events on.
- * @param {goog.events.EventWrapper} wrapper Event wrapper to use.
- * @param {function(this:T, ?):?|{handleEvent:function(?):?}|null} listener
- *     Callback method, or an object with a handleEvent function.
- * @param {boolean=} opt_capt Whether to fire in capture phase (defaults to
- *     false).
- * @param {T=} opt_handler Element in whose scope to call the listener.
- * @template T
- */
-goog.events.listenWithWrapper = function(
-    src, wrapper, listener, opt_capt, opt_handler) {
-  wrapper.listen(src, listener, opt_capt, opt_handler);
-};
-
-
-/**
- * Removes an event listener which was added with listen().
- *
- * @param {EventTarget|goog.events.Listenable} src The target to stop
- *     listening to events on.
- * @param {string|Array<string>|
- *     !goog.events.EventId<EVENTOBJ>|!Array<!goog.events.EventId<EVENTOBJ>>}
- *     type Event type or array of event types to unlisten to.
- * @param {function(?):?|{handleEvent:function(?):?}|null} listener The
- *     listener function to remove.
- * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
- *     whether the listener is fired during the capture or bubble phase of the
- *     event.
- * @param {Object=} opt_handler Element in whose scope to call the listener.
- * @return {?boolean} indicating whether the listener was there to remove.
- * @template EVENTOBJ
- */
-goog.events.unlisten = function(src, type, listener, opt_capt, opt_handler) {
-  if (goog.isArray(type)) {
-    for (var i = 0; i < type.length; i++) {
-      goog.events.unlisten(src, type[i], listener, opt_capt, opt_handler);
-    }
-    return null;
-  }
-
-  listener = goog.events.wrapListener(listener);
-  if (goog.events.Listenable.isImplementedBy(src)) {
-    return src.unlisten(
-        /** @type {string|!goog.events.EventId} */ (type), listener, opt_capt,
-        opt_handler);
-  }
-
-  if (!src) {
-    // TODO(chrishenry): We should tighten the API to only accept
-    // non-null objects, or add an assertion here.
-    return false;
-  }
-
-  var capture = !!opt_capt;
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {!EventTarget} */ (src));
-  if (listenerMap) {
-    var listenerObj = listenerMap.getListener(
-        /** @type {string|!goog.events.EventId} */ (type), listener, capture,
-        opt_handler);
-    if (listenerObj) {
-      return goog.events.unlistenByKey(listenerObj);
-    }
-  }
-
-  return false;
-};
-
-
-/**
- * Removes an event listener which was added with listen() by the key
- * returned by listen().
- *
- * @param {goog.events.Key} key The key returned by listen() for this
- *     event listener.
- * @return {boolean} indicating whether the listener was there to remove.
- */
-goog.events.unlistenByKey = function(key) {
-  // TODO(chrishenry): Remove this check when tests that rely on this
-  // are fixed.
-  if (goog.isNumber(key)) {
-    return false;
-  }
-
-  var listener = key;
-  if (!listener || listener.removed) {
-    return false;
-  }
-
-  var src = listener.src;
-  if (goog.events.Listenable.isImplementedBy(src)) {
-    return /** @type {!goog.events.Listenable} */ (src).unlistenByKey(listener);
-  }
-
-  var type = listener.type;
-  var proxy = listener.proxy;
-  if (src.removeEventListener) {
-    src.removeEventListener(type, proxy, listener.capture);
-  } else if (src.detachEvent) {
-    src.detachEvent(goog.events.getOnString_(type), proxy);
-  }
-  goog.events.listenerCountEstimate_--;
-
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {!EventTarget} */ (src));
-  // TODO(chrishenry): Try to remove this conditional and execute the
-  // first branch always. This should be safe.
-  if (listenerMap) {
-    listenerMap.removeByKey(listener);
-    if (listenerMap.getTypeCount() == 0) {
-      // Null the src, just because this is simple to do (and useful
-      // for IE <= 7).
-      listenerMap.src = null;
-      // We don't use delete here because IE does not allow delete
-      // on a window object.
-      src[goog.events.LISTENER_MAP_PROP_] = null;
-    }
-  } else {
-    listener.markAsRemoved();
-  }
-
-  return true;
-};
-
-
-/**
- * Removes an event listener which was added with listenWithWrapper().
- *
- * @param {EventTarget|goog.events.Listenable} src The target to stop
- *     listening to events on.
- * @param {goog.events.EventWrapper} wrapper Event wrapper to use.
- * @param {function(?):?|{handleEvent:function(?):?}|null} listener The
- *     listener function to remove.
- * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
- *     whether the listener is fired during the capture or bubble phase of the
- *     event.
- * @param {Object=} opt_handler Element in whose scope to call the listener.
- */
-goog.events.unlistenWithWrapper = function(
-    src, wrapper, listener, opt_capt, opt_handler) {
-  wrapper.unlisten(src, listener, opt_capt, opt_handler);
-};
-
-
-/**
- * Removes all listeners from an object. You can also optionally
- * remove listeners of a particular type.
- *
- * @param {Object|undefined} obj Object to remove listeners from. Must be an
- *     EventTarget or a goog.events.Listenable.
- * @param {string|!goog.events.EventId=} opt_type Type of event to remove.
- *     Default is all types.
- * @return {number} Number of listeners removed.
- */
-goog.events.removeAll = function(obj, opt_type) {
-  // TODO(chrishenry): Change the type of obj to
-  // (!EventTarget|!goog.events.Listenable).
-
-  if (!obj) {
-    return 0;
-  }
-
-  if (goog.events.Listenable.isImplementedBy(obj)) {
-    return /** @type {?} */ (obj).removeAllListeners(opt_type);
-  }
-
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {!EventTarget} */ (obj));
-  if (!listenerMap) {
-    return 0;
-  }
-
-  var count = 0;
-  var typeStr = opt_type && opt_type.toString();
-  for (var type in listenerMap.listeners) {
-    if (!typeStr || type == typeStr) {
-      // Clone so that we don't need to worry about unlistenByKey
-      // changing the content of the ListenerMap.
-      var listeners = listenerMap.listeners[type].concat();
-      for (var i = 0; i < listeners.length; ++i) {
-        if (goog.events.unlistenByKey(listeners[i])) {
-          ++count;
-        }
-      }
-    }
-  }
-  return count;
-};
-
-
-/**
- * Gets the listeners for a given object, type and capture phase.
- *
- * @param {Object} obj Object to get listeners for.
- * @param {string|!goog.events.EventId} type Event type.
- * @param {boolean} capture Capture phase?.
- * @return {Array<!goog.events.Listener>} Array of listener objects.
- */
-goog.events.getListeners = function(obj, type, capture) {
-  if (goog.events.Listenable.isImplementedBy(obj)) {
-    return /** @type {!goog.events.Listenable} */ (obj).getListeners(
-        type, capture);
-  } else {
-    if (!obj) {
-      // TODO(chrishenry): We should tighten the API to accept
-      // !EventTarget|goog.events.Listenable, and add an assertion here.
-      return [];
-    }
-
-    var listenerMap = goog.events.getListenerMap_(
-        /** @type {!EventTarget} */ (obj));
-    return listenerMap ? listenerMap.getListeners(type, capture) : [];
-  }
-};
-
-
-/**
- * Gets the goog.events.Listener for the event or null if no such listener is
- * in use.
- *
- * @param {EventTarget|goog.events.Listenable} src The target from
- *     which to get listeners.
- * @param {?string|!goog.events.EventId<EVENTOBJ>} type The type of the event.
- * @param {function(EVENTOBJ):?|{handleEvent:function(?):?}|null} listener The
- *     listener function to get.
- * @param {boolean=} opt_capt In DOM-compliant browsers, this determines
- *                            whether the listener is fired during the
- *                            capture or bubble phase of the event.
- * @param {Object=} opt_handler Element in whose scope to call the listener.
- * @return {goog.events.ListenableKey} the found listener or null if not found.
- * @template EVENTOBJ
- */
-goog.events.getListener = function(src, type, listener, opt_capt, opt_handler) {
-  // TODO(chrishenry): Change type from ?string to string, or add assertion.
-  type = /** @type {string} */ (type);
-  listener = goog.events.wrapListener(listener);
-  var capture = !!opt_capt;
-  if (goog.events.Listenable.isImplementedBy(src)) {
-    return src.getListener(type, listener, capture, opt_handler);
-  }
-
-  if (!src) {
-    // TODO(chrishenry): We should tighten the API to only accept
-    // non-null objects, or add an assertion here.
-    return null;
-  }
-
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {!EventTarget} */ (src));
-  if (listenerMap) {
-    return listenerMap.getListener(type, listener, capture, opt_handler);
-  }
-  return null;
-};
-
-
-/**
- * Returns whether an event target has any active listeners matching the
- * specified signature. If either the type or capture parameters are
- * unspecified, the function will match on the remaining criteria.
- *
- * @param {EventTarget|goog.events.Listenable} obj Target to get
- *     listeners for.
- * @param {string|!goog.events.EventId=} opt_type Event type.
- * @param {boolean=} opt_capture Whether to check for capture or bubble-phase
- *     listeners.
- * @return {boolean} Whether an event target has one or more listeners matching
- *     the requested type and/or capture phase.
- */
-goog.events.hasListener = function(obj, opt_type, opt_capture) {
-  if (goog.events.Listenable.isImplementedBy(obj)) {
-    return obj.hasListener(opt_type, opt_capture);
-  }
-
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {!EventTarget} */ (obj));
-  return !!listenerMap && listenerMap.hasListener(opt_type, opt_capture);
-};
-
-
-/**
- * Provides a nice string showing the normalized event objects public members
- * @param {Object} e Event Object.
- * @return {string} String of the public members of the normalized event object.
- */
-goog.events.expose = function(e) {
-  var str = [];
-  for (var key in e) {
-    if (e[key] && e[key].id) {
-      str.push(key + ' = ' + e[key] + ' (' + e[key].id + ')');
-    } else {
-      str.push(key + ' = ' + e[key]);
-    }
-  }
-  return str.join('\n');
-};
-
-
-/**
- * Returns a string with on prepended to the specified type. This is used for IE
- * which expects "on" to be prepended. This function caches the string in order
- * to avoid extra allocations in steady state.
- * @param {string} type Event type.
- * @return {string} The type string with 'on' prepended.
- * @private
- */
-goog.events.getOnString_ = function(type) {
-  if (type in goog.events.onStringMap_) {
-    return goog.events.onStringMap_[type];
-  }
-  return goog.events.onStringMap_[type] = goog.events.onString_ + type;
-};
-
-
-/**
- * Fires an object's listeners of a particular type and phase
- *
- * @param {Object} obj Object whose listeners to call.
- * @param {string|!goog.events.EventId} type Event type.
- * @param {boolean} capture Which event phase.
- * @param {Object} eventObject Event object to be passed to listener.
- * @return {boolean} True if all listeners returned true else false.
- */
-goog.events.fireListeners = function(obj, type, capture, eventObject) {
-  if (goog.events.Listenable.isImplementedBy(obj)) {
-    return /** @type {!goog.events.Listenable} */ (obj).fireListeners(
-        type, capture, eventObject);
-  }
-
-  return goog.events.fireListeners_(obj, type, capture, eventObject);
-};
-
-
-/**
- * Fires an object's listeners of a particular type and phase.
- * @param {Object} obj Object whose listeners to call.
- * @param {string|!goog.events.EventId} type Event type.
- * @param {boolean} capture Which event phase.
- * @param {Object} eventObject Event object to be passed to listener.
- * @return {boolean} True if all listeners returned true else false.
- * @private
- */
-goog.events.fireListeners_ = function(obj, type, capture, eventObject) {
-  /** @type {boolean} */
-  var retval = true;
-
-  var listenerMap = goog.events.getListenerMap_(
-      /** @type {EventTarget} */ (obj));
-  if (listenerMap) {
-    // TODO(chrishenry): Original code avoids array creation when there
-    // is no listener, so we do the same. If this optimization turns
-    // out to be not required, we can replace this with
-    // listenerMap.getListeners(type, capture) instead, which is simpler.
-    var listenerArray = listenerMap.listeners[type.toString()];
-    if (listenerArray) {
-      listenerArray = listenerArray.concat();
-      for (var i = 0; i < listenerArray.length; i++) {
-        var listener = listenerArray[i];
-        // We might not have a listener if the listener was removed.
-        if (listener && listener.capture == capture && !listener.removed) {
-          var result = goog.events.fireListener(listener, eventObject);
-          retval = retval && (result !== false);
-        }
-      }
-    }
-  }
-  return retval;
-};
-
-
-/**
- * Fires a listener with a set of arguments
- *
- * @param {goog.events.Listener} listener The listener object to call.
- * @param {Object} eventObject The event object to pass to the listener.
- * @return {boolean} Result of listener.
- */
-goog.events.fireListener = function(listener, eventObject) {
-  var listenerFn = listener.listener;
-  var listenerHandler = listener.handler || listener.src;
-
-  if (listener.callOnce) {
-    goog.events.unlistenByKey(listener);
-  }
-  return listenerFn.call(listenerHandler, eventObject);
-};
-
-
-/**
- * Gets the total number of listeners currently in the system.
- * @return {number} Number of listeners.
- * @deprecated This returns estimated count, now that Closure no longer
- * stores a central listener registry. We still return an estimation
- * to keep existing listener-related tests passing. In the near future,
- * this function will be removed.
- */
-goog.events.getTotalListenerCount = function() {
-  return goog.events.listenerCountEstimate_;
-};
-
-
-/**
- * Dispatches an event (or event like object) and calls all listeners
- * listening for events of this type. The type of the event is decided by the
- * type property on the event object.
- *
- * If any of the listeners returns false OR calls preventDefault then this
- * function will return false.  If one of the capture listeners calls
- * stopPropagation, then the bubble listeners won't fire.
- *
- * @param {goog.events.Listenable} src The event target.
- * @param {goog.events.EventLike} e Event object.
- * @return {boolean} If anyone called preventDefault on the event object (or
- *     if any of the handlers returns false) this will also return false.
- *     If there are no handlers, or if all handlers return true, this returns
- *     true.
- */
-goog.events.dispatchEvent = function(src, e) {
-  goog.asserts.assert(
-      goog.events.Listenable.isImplementedBy(src),
-      'Can not use goog.events.dispatchEvent with ' +
-          'non-goog.events.Listenable instance.');
-  return src.dispatchEvent(e);
-};
-
-
-/**
- * Installs exception protection for the browser event entry point using the
- * given error handler.
- *
- * @param {goog.debug.ErrorHandler} errorHandler Error handler with which to
- *     protect the entry point.
- */
-goog.events.protectBrowserEventEntryPoint = function(errorHandler) {
-  goog.events.handleBrowserEvent_ =
-      errorHandler.protectEntryPoint(goog.events.handleBrowserEvent_);
-};
-
-
-/**
- * Handles an event and dispatches it to the correct listeners. This
- * function is a proxy for the real listener the user specified.
- *
- * @param {goog.events.Listener} listener The listener object.
- * @param {Event=} opt_evt Optional event object that gets passed in via the
- *     native event handlers.
- * @return {boolean} Result of the event handler.
- * @this {EventTarget} The object or Element that fired the event.
- * @private
- */
-goog.events.handleBrowserEvent_ = function(listener, opt_evt) {
-  if (listener.removed) {
-    return true;
-  }
-
-  // Synthesize event propagation if the browser does not support W3C
-  // event model.
-  if (!goog.events.BrowserFeature.HAS_W3C_EVENT_SUPPORT) {
-    var ieEvent = opt_evt ||
-        /** @type {Event} */ (goog.getObjectByName('window.event'));
-    var evt = new goog.events.BrowserEvent(ieEvent, this);
-    /** @type {boolean} */
-    var retval = true;
-
-    if (goog.events.CAPTURE_SIMULATION_MODE ==
-        goog.events.CaptureSimulationMode.ON) {
-      // If we have not marked this event yet, we should perform capture
-      // simulation.
-      if (!goog.events.isMarkedIeEvent_(ieEvent)) {
-        goog.events.markIeEvent_(ieEvent);
-
-        var ancestors = [];
-        for (var parent = evt.currentTarget; parent;
-             parent = parent.parentNode) {
-          ancestors.push(parent);
-        }
-
-        // Fire capture listeners.
-        var type = listener.type;
-        for (var i = ancestors.length - 1; !evt.propagationStopped_ && i >= 0;
-             i--) {
-          evt.currentTarget = ancestors[i];
-          var result =
-              goog.events.fireListeners_(ancestors[i], type, true, evt);
-          retval = retval && result;
-        }
-
-        // Fire bubble listeners.
-        //
-        // We can technically rely on IE to perform bubble event
-        // propagation. However, it turns out that IE fires events in
-        // opposite order of attachEvent registration, which broke
-        // some code and tests that rely on the order. (While W3C DOM
-        // Level 2 Events TR leaves the event ordering unspecified,
-        // modern browsers and W3C DOM Level 3 Events Working Draft
-        // actually specify the order as the registration order.)
-        for (var i = 0; !evt.propagationStopped_ && i < ancestors.length; i++) {
-          evt.currentTarget = ancestors[i];
-          var result =
-              goog.events.fireListeners_(ancestors[i], type, false, evt);
-          retval = retval && result;
-        }
-      }
-    } else {
-      retval = goog.events.fireListener(listener, evt);
-    }
-    return retval;
-  }
-
-  // Otherwise, simply fire the listener.
-  return goog.events.fireListener(
-      listener, new goog.events.BrowserEvent(opt_evt, this));
-};
-
-
-/**
- * This is used to mark the IE event object so we do not do the Closure pass
- * twice for a bubbling event.
- * @param {Event} e The IE browser event.
- * @private
- */
-goog.events.markIeEvent_ = function(e) {
-  // Only the keyCode and the returnValue can be changed. We use keyCode for
-  // non keyboard events.
-  // event.returnValue is a bit more tricky. It is undefined by default. A
-  // boolean false prevents the default action. In a window.onbeforeunload and
-  // the returnValue is non undefined it will be alerted. However, we will only
-  // modify the returnValue for keyboard events. We can get a problem if non
-  // closure events sets the keyCode or the returnValue
-
-  var useReturnValue = false;
-
-  if (e.keyCode == 0) {
-    // We cannot change the keyCode in case that srcElement is input[type=file].
-    // We could test that that is the case but that would allocate 3 objects.
-    // If we use try/catch we will only allocate extra objects in the case of a
-    // failure.
-    /** @preserveTry */
-    try {
-      e.keyCode = -1;
-      return;
-    } catch (ex) {
-      useReturnValue = true;
-    }
-  }
-
-  if (useReturnValue ||
-      /** @type {boolean|undefined} */ (e.returnValue) == undefined) {
-    e.returnValue = true;
-  }
-};
-
-
-/**
- * This is used to check if an IE event has already been handled by the Closure
- * system so we do not do the Closure pass twice for a bubbling event.
- * @param {Event} e  The IE browser event.
- * @return {boolean} True if the event object has been marked.
- * @private
- */
-goog.events.isMarkedIeEvent_ = function(e) {
-  return e.keyCode < 0 || e.returnValue != undefined;
-};
-
-
-/**
- * Counter to create unique event ids.
- * @private {number}
- */
-goog.events.uniqueIdCounter_ = 0;
-
-
-/**
- * Creates a unique event id.
- *
- * @param {string} identifier The identifier.
- * @return {string} A unique identifier.
- * @idGenerator {unique}
- */
-goog.events.getUniqueId = function(identifier) {
-  return identifier + '_' + goog.events.uniqueIdCounter_++;
-};
-
-
-/**
- * @param {EventTarget} src The source object.
- * @return {goog.events.ListenerMap} A listener map for the given
- *     source object, or null if none exists.
- * @private
- */
-goog.events.getListenerMap_ = function(src) {
-  var listenerMap = src[goog.events.LISTENER_MAP_PROP_];
-  // IE serializes the property as well (e.g. when serializing outer
-  // HTML). So we must check that the value is of the correct type.
-  return listenerMap instanceof goog.events.ListenerMap ? listenerMap : null;
-};
-
-
-/**
- * Expando property for listener function wrapper for Object with
- * handleEvent.
- * @private @const {string}
- */
-goog.events.LISTENER_WRAPPER_PROP_ =
-    '__closure_events_fn_' + ((Math.random() * 1e9) >>> 0);
-
-
-/**
- * @param {Object|Function} listener The listener function or an
- *     object that contains handleEvent method.
- * @return {!Function} Either the original function or a function that
- *     calls obj.handleEvent. If the same listener is passed to this
- *     function more than once, the same function is guaranteed to be
- *     returned.
- */
-goog.events.wrapListener = function(listener) {
-  goog.asserts.assert(listener, 'Listener can not be null.');
-
-  if (goog.isFunction(listener)) {
-    return listener;
-  }
-
-  goog.asserts.assert(
-      listener.handleEvent, 'An object listener must have handleEvent method.');
-  if (!listener[goog.events.LISTENER_WRAPPER_PROP_]) {
-    listener[goog.events.LISTENER_WRAPPER_PROP_] = function(e) {
-      return /** @type {?} */ (listener).handleEvent(e);
-    };
-  }
-  return listener[goog.events.LISTENER_WRAPPER_PROP_];
-};
-
-
-// Register the browser event handler as an entry point, so that
-// it can be monitored for exception handling, etc.
-goog.debug.entryPointRegistry.register(
-    /**
-     * @param {function(!Function): !Function} transformer The transforming
-     *     function.
-     */
-    function(transformer) {
-      goog.events.handleBrowserEvent_ =
-          transformer(goog.events.handleBrowserEvent_);
-    });
 
 goog.provide('ngeo.Debounce');
 
@@ -113648,6 +113944,12 @@ ngeo.format.XSDAttribute.prototype.readFromElementNode_ = function(node) {
         attribute.geomType = ol.geom.GeometryType.LINE_STRING;
       } else if (/^gml:Polygon/.exec(type)) {
         attribute.geomType = ol.geom.GeometryType.POLYGON;
+      } else if (/^gml:MultiPoint/.exec(type)) {
+        attribute.geomType = ol.geom.GeometryType.MULTI_POINT;
+      } else if (/^gml:MultiLineString/.exec(type)) {
+        attribute.geomType = ol.geom.GeometryType.MULTI_LINE_STRING;
+      } else if (/^gml:MultiPolygon/.exec(type)) {
+        attribute.geomType = ol.geom.GeometryType.MULTI_POLYGON;
       }
     } else if (type === 'xsd:string') {
       attribute.type = ngeo.format.XSDAttributeType.TEXT;
@@ -114303,6 +114605,7 @@ ngeo.interaction.MeasurePointMobile.prototype.handleMeasure = function(
 goog.provide('ngeo.interaction.ModifyCircle');
 
 goog.require('goog.asserts');
+goog.require('ngeo.interaction.MeasureAzimut');
 goog.require('ol');
 goog.require('ol.Collection');
 goog.require('ol.Feature');
@@ -114842,21 +115145,6 @@ ngeo.interaction.ModifyRectangle = function(options) {
    * @private
    */
   this.modified_ = false;
-
-  /**
-   * Indicate whether the interaction is currently changing a feature's
-   * coordinates.
-   * @type {boolean}
-   * @private
-   */
-  this.changingFeature_ = false;
-
-  /**
-   * @type {number}
-   * @private
-   */
-  this.pixelTolerance_ = options.pixelTolerance !== undefined ?
-      options.pixelTolerance : 10;
 
   // Get the style for the box and the points
   var style = options.style ? options.style : ol.interaction.Modify.getDefaultStyleFunction();
@@ -115448,411 +115736,6 @@ ngeo.interaction.Modify.prototype.getFeatureCollection_ = function(feature) {
   return features;
 };
 
-goog.provide('ngeo.RotateEvent');
-goog.provide('ngeo.RotateEventType');
-goog.provide('ngeo.interaction.Rotate');
-
-goog.require('goog.asserts');
-goog.require('goog.events');
-goog.require('goog.events.EventType');
-goog.require('ol');
-goog.require('ol.Collection');
-goog.require('ol.Feature');
-goog.require('ol.MapBrowserPointerEvent');
-goog.require('ol.events');
-goog.require('ol.interaction.Modify');
-goog.require('ol.interaction.Pointer');
-goog.require('ol.geom.Point');
-goog.require('ol.layer.Vector');
-goog.require('ol.source.Vector');
-
-
-/**
- * @enum {string}
- */
-ngeo.RotateEventType = {
-  /**
-   * Triggered upon rotate draw end
-   * @event ngeo.RotateEvent#rotateend
-   */
-  ROTATEEND: 'rotateend'
-
-};
-
-
-/**
- * @classdesc
- * Events emitted by {@link ngeo.interaction.Rotate} instances are
- * instances of this type.
- *
- * @constructor
- * @struct
- * @extends {ol.events.Event}
- * @implements {ngeox.RotateEvent}
- * @param {ngeo.RotateEventType} type Type.
- * @param {ol.Feature} feature The feature rotated.
- */
-ngeo.RotateEvent = function(type, feature) {
-
-  ol.events.Event.call(this, type);
-
-  /**
-   * The feature being rotated.
-   * @type {ol.Feature}
-   * @api stable
-   */
-  this.feature = feature;
-
-};
-ol.inherits(ngeo.RotateEvent, ol.events.Event);
-
-
-/**
- * @classdesc
- * Interaction to rotate features.
- *
- * @constructor
- * @struct
- * @extends {ol.interaction.Pointer}
- * @param {olx.interaction.ModifyOptions} options Options.
- * @fires ngeo.interaction.ModifyCircleEvent
- * @export
- * @api
- */
-ngeo.interaction.Rotate = function(options) {
-
-  /**
-   * @type {Array.<ol.EventsKey>}
-   * @private
-   */
-  this.listenerKeys_ = [];
-
-  /**
-   * @type {boolean}
-   * @private
-   */
-  this.modified_ = false;
-
-  /**
-   * @type {?goog.events.Key}
-   * @private
-   */
-  this.keyPressListenerKey_ = null;
-
-  /**
-   * Indicate whether the interaction is currently changing a feature's
-   * coordinates.
-   * @type {boolean}
-   * @private
-   */
-  this.changingFeature_ = false;
-
-  /**
-   * @type {number}
-   * @private
-   */
-  this.pixelTolerance_ = options.pixelTolerance !== undefined ?
-      options.pixelTolerance : 10;
-
-  /**
-   * @type {ol.Collection.<ol.Feature>}
-   * @private
-   */
-  this.features_ = options.features;
-
-  /**
-   * The feature currently modified.
-   * @type {ol.Feature}
-   * @private
-   */
-  this.feature_ = null;
-
-  /**
-   * @type {ol.Pixel}
-   * @private
-   */
-  this.coordinate_ = null;
-
-  /**
-   * @type {ol.Coordinate}
-   * @private
-   */
-  this.centerCoordinate_ = null;
-
-  var style = options.style ? options.style : ol.interaction.Modify.getDefaultStyleFunction();
-
-  /**
-   * Draw overlay where sketch features are drawn.
-   * @type {ol.layer.Vector}
-   * @private
-   */
-  this.overlay_ = new ol.layer.Vector({
-    source: new ol.source.Vector({
-      useSpatialIndex: false,
-      wrapX: !!options.wrapX
-    }),
-    style: style,
-    updateWhileAnimating: true,
-    updateWhileInteracting: true
-  });
-
-  /**
-   * @type {!Object.<number, ol.Feature>}
-   * @private
-   */
-  this.centerFeatures_ = {};
-
-  ol.interaction.Pointer.call(this, {
-    handleDownEvent: this.handleDown_,
-    handleDragEvent: this.handleDrag_,
-    handleUpEvent: this.handleUp_
-  });
-
-};
-ol.inherits(ngeo.interaction.Rotate, ol.interaction.Pointer);
-
-
-/**
- * Activate or deactivate the interaction.
- * @param {boolean} active Active.
- * @export
- */
-ngeo.interaction.Rotate.prototype.setActive = function(active) {
-
-  if (this.keyPressListenerKey_) {
-    goog.events.unlistenByKey(this.keyPressListenerKey_);
-    this.keyPressListenerKey_ = null;
-  }
-
-  ol.interaction.Pointer.prototype.setActive.call(this, active);
-
-  if (active) {
-    this.keyPressListenerKey_ = goog.events.listen(
-      document,
-      goog.events.EventType.KEYUP,
-      this.handleKeyUp_,
-      false,
-      this
-    );
-    this.features_.forEach(this.addFeature_, this);
-    this.listenerKeys_.push(ol.events.listen(this.features_,
-        ol.Collection.EventType.ADD, this.handleFeatureAdd_, this));
-    this.listenerKeys_.push(ol.events.listen(this.features_,
-        ol.Collection.EventType.REMOVE, this.handleFeatureRemove_, this));
-
-  } else {
-    this.listenerKeys_.forEach(function(key) {
-      ol.events.unlistenByKey(key);
-    }, this);
-    this.features_.forEach(this.removeFeature_, this);
-  }
-};
-
-
-/**
- * @param {ol.Feature} feature Feature.
- * @private
- */
-ngeo.interaction.Rotate.prototype.addFeature_ = function(feature) {
-  var geometry = feature.getGeometry();
-  goog.asserts.assertInstanceof(geometry, ol.geom.Geometry);
-
-  feature.set('angle', 0);
-
-  // Add the center icon to the overlay
-  var uid = goog.getUid(feature);
-  var point = new ol.geom.Point(this.getCenterCoordinate_(geometry));
-  var centerFeature = new ol.Feature(point);
-  this.centerFeatures_[uid] = centerFeature;
-  this.overlay_.getSource().addFeature(centerFeature);
-
-};
-
-
-/**
- * @param {ol.MapBrowserPointerEvent} evt Map browser event
- * @private
- */
-ngeo.interaction.Rotate.prototype.willModifyFeatures_ = function(evt) {
-  if (!this.modified_) {
-    this.modified_ = true;
-    this.dispatchEvent(new ol.interaction.Modify.Event(
-        ol.interaction.Modify.EventType.MODIFYSTART, this.features_, evt));
-  }
-};
-
-
-/**
- * @param {ol.Feature} feature Feature.
- * @private
- */
-ngeo.interaction.Rotate.prototype.removeFeature_ = function(feature) {
-  this.feature_ = null;
-  //this.overlay_.getSource().removeFeature(feature);
-
-  if (feature) {
-    var uid = goog.getUid(feature);
-
-    if (this.centerFeatures_[uid]) {
-      this.overlay_.getSource().removeFeature(this.centerFeatures_[uid]);
-      delete this.centerFeatures_[uid];
-    }
-  }
-};
-
-
-/**
- * @inheritDoc
- */
-ngeo.interaction.Rotate.prototype.setMap = function(map) {
-  this.overlay_.setMap(map);
-  ol.interaction.Pointer.prototype.setMap.call(this, map);
-};
-
-
-/**
- * @param {ol.Collection.Event} evt Event.
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleFeatureAdd_ = function(evt) {
-  var feature = evt.element;
-  goog.asserts.assertInstanceof(feature, ol.Feature,
-      'feature should be an ol.Feature');
-  this.addFeature_(feature);
-};
-
-
-/**
- * @param {ol.Collection.Event} evt Event.
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleFeatureRemove_ = function(evt) {
-  var feature = /** @type {ol.Feature} */ (evt.element);
-  this.removeFeature_(feature);
-};
-
-
-/**
- * @param {ol.MapBrowserPointerEvent} evt Event.
- * @return {boolean} Start drag sequence?
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleDown_ = function(evt) {
-  var map = evt.map;
-
-  var feature = map.forEachFeatureAtPixel(evt.pixel,
-      function(feature, layer) {
-        return feature;
-      }, undefined);
-
-  if (feature) {
-    var found = false;
-    this.features_.forEach(function(f) {
-      if (goog.getUid(f) == goog.getUid(feature)) {
-        found = true;
-      }
-    });
-    if (!found) {
-      feature = null;
-    }
-  }
-
-  if (feature) {
-    this.coordinate_ = evt.coordinate;
-    this.feature_ = feature;
-    var geometry = (this.feature_.getGeometry());
-    if (geometry !== undefined) {
-      this.centerCoordinate_ = this.getCenterCoordinate_(geometry);
-    }
-
-    return true;
-  }
-
-  return false;
-};
-
-
-/**
- * @param {ol.geom.Geometry} geometry Geometry.
- * @return {ol.Coordinate} The center coordinate of the geometry.
- * @private
- */
-ngeo.interaction.Rotate.prototype.getCenterCoordinate_ = function(
-    geometry) {
-
-  var center;
-
-  if (geometry instanceof ol.geom.LineString) {
-    center = geometry.getFlatMidpoint();
-  } else if (geometry instanceof ol.geom.Polygon) {
-    center = geometry.getFlatInteriorPoint();
-  } else {
-    var extent = geometry.getExtent();
-    center = ol.extent.getCenter(extent);
-  }
-
-  return center;
-};
-
-
-/**
- * @param {ol.MapBrowserPointerEvent} evt Event.
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleDrag_ = function(evt) {
-  this.willModifyFeatures_(evt);
-
-  var geometry = /** @type {ol.geom.SimpleGeometry} */
-      (this.feature_.getGeometry());
-
-  var oldX = this.coordinate_[0], oldY = this.coordinate_[1];
-
-  var centerX = this.centerCoordinate_[0];
-  var centerY = this.centerCoordinate_[1];
-
-  var dx1 = oldX - centerX;
-  var dy1 = oldY - centerY;
-  var dx0 = evt.coordinate[0] - centerX;
-  var dy0 = evt.coordinate[1] - centerY;
-
-  this.coordinate_[0] = evt.coordinate[0];
-  this.coordinate_[1] = evt.coordinate[1];
-
-  var a0 = Math.atan2(dy0, dx0);
-  var a1 = Math.atan2(dy1, dx1);
-  var angle = a1 - a0;
-
-  geometry.rotate(-angle, [centerX, centerY]);
-};
-
-
-/**
- * @param {ol.MapBrowserPointerEvent} evt Event.
- * @return {boolean} Stop drag sequence?
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleUp_ = function(evt) {
-  if (this.modified_) {
-    this.dispatchEvent(new ngeo.RotateEvent(ngeo.RotateEventType.ROTATEEND,
-      this.feature_));
-    this.modified_ = false;
-    this.setActive(false);
-  }
-  return false;
-};
-
-
-/**
- * Deactivate this interaction if the ESC key is pressed.
- * @param {goog.events.Event} evt Event.
- * @private
- */
-ngeo.interaction.Rotate.prototype.handleKeyUp_ = function(evt) {
-  if (evt.keyCode === goog.events.KeyCodes.ESC) {
-    this.setActive(false);
-  }
-};
-
 // Copyright 2006 The Closure Library Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -116276,6 +116159,412 @@ goog.events.KeyCodes.normalizeMacWebKitKeyCode = function(keyCode) {
       return goog.events.KeyCodes.META;          // 91
     default:
       return keyCode;
+  }
+};
+
+goog.provide('ngeo.RotateEvent');
+goog.provide('ngeo.RotateEventType');
+goog.provide('ngeo.interaction.Rotate');
+
+goog.require('goog.asserts');
+goog.require('goog.events');
+goog.require('goog.events.EventType');
+goog.require('goog.events.KeyCodes');
+goog.require('ol');
+goog.require('ol.Collection');
+goog.require('ol.Feature');
+goog.require('ol.MapBrowserPointerEvent');
+goog.require('ol.events');
+goog.require('ol.interaction.Modify');
+goog.require('ol.interaction.Pointer');
+goog.require('ol.geom.Point');
+goog.require('ol.layer.Vector');
+goog.require('ol.source.Vector');
+
+
+/**
+ * @enum {string}
+ */
+ngeo.RotateEventType = {
+  /**
+   * Triggered upon rotate draw end
+   * @event ngeo.RotateEvent#rotateend
+   */
+  ROTATEEND: 'rotateend'
+
+};
+
+
+/**
+ * @classdesc
+ * Events emitted by {@link ngeo.interaction.Rotate} instances are
+ * instances of this type.
+ *
+ * @constructor
+ * @struct
+ * @extends {ol.events.Event}
+ * @implements {ngeox.RotateEvent}
+ * @param {ngeo.RotateEventType} type Type.
+ * @param {ol.Feature} feature The feature rotated.
+ */
+ngeo.RotateEvent = function(type, feature) {
+
+  ol.events.Event.call(this, type);
+
+  /**
+   * The feature being rotated.
+   * @type {ol.Feature}
+   * @api stable
+   */
+  this.feature = feature;
+
+};
+ol.inherits(ngeo.RotateEvent, ol.events.Event);
+
+
+/**
+ * @classdesc
+ * Interaction to rotate features.
+ *
+ * @constructor
+ * @struct
+ * @extends {ol.interaction.Pointer}
+ * @param {olx.interaction.ModifyOptions} options Options.
+ * @fires ngeo.interaction.ModifyCircleEvent
+ * @export
+ * @api
+ */
+ngeo.interaction.Rotate = function(options) {
+
+  /**
+   * @type {Array.<ol.EventsKey>}
+   * @private
+   */
+  this.listenerKeys_ = [];
+
+  /**
+   * @type {boolean}
+   * @private
+   */
+  this.modified_ = false;
+
+  /**
+   * @type {?goog.events.Key}
+   * @private
+   */
+  this.keyPressListenerKey_ = null;
+
+  /**
+   * Indicate whether the interaction is currently changing a feature's
+   * coordinates.
+   * @type {boolean}
+   * @private
+   */
+  this.changingFeature_ = false;
+
+  /**
+   * @type {number}
+   * @private
+   */
+  this.pixelTolerance_ = options.pixelTolerance !== undefined ?
+      options.pixelTolerance : 10;
+
+  /**
+   * @type {ol.Collection.<ol.Feature>}
+   * @private
+   */
+  this.features_ = options.features;
+
+  /**
+   * The feature currently modified.
+   * @type {ol.Feature}
+   * @private
+   */
+  this.feature_ = null;
+
+  /**
+   * @type {ol.Pixel}
+   * @private
+   */
+  this.coordinate_ = null;
+
+  /**
+   * @type {ol.Coordinate}
+   * @private
+   */
+  this.centerCoordinate_ = null;
+
+  var style = options.style ? options.style : ol.interaction.Modify.getDefaultStyleFunction();
+
+  /**
+   * Draw overlay where sketch features are drawn.
+   * @type {ol.layer.Vector}
+   * @private
+   */
+  this.overlay_ = new ol.layer.Vector({
+    source: new ol.source.Vector({
+      useSpatialIndex: false,
+      wrapX: !!options.wrapX
+    }),
+    style: style,
+    updateWhileAnimating: true,
+    updateWhileInteracting: true
+  });
+
+  /**
+   * @type {!Object.<number, ol.Feature>}
+   * @private
+   */
+  this.centerFeatures_ = {};
+
+  ol.interaction.Pointer.call(this, {
+    handleDownEvent: this.handleDown_,
+    handleDragEvent: this.handleDrag_,
+    handleUpEvent: this.handleUp_
+  });
+
+};
+ol.inherits(ngeo.interaction.Rotate, ol.interaction.Pointer);
+
+
+/**
+ * Activate or deactivate the interaction.
+ * @param {boolean} active Active.
+ * @export
+ */
+ngeo.interaction.Rotate.prototype.setActive = function(active) {
+
+  if (this.keyPressListenerKey_) {
+    goog.events.unlistenByKey(this.keyPressListenerKey_);
+    this.keyPressListenerKey_ = null;
+  }
+
+  ol.interaction.Pointer.prototype.setActive.call(this, active);
+
+  if (active) {
+    this.keyPressListenerKey_ = goog.events.listen(
+      document,
+      goog.events.EventType.KEYUP,
+      this.handleKeyUp_,
+      false,
+      this
+    );
+    this.features_.forEach(this.addFeature_, this);
+    this.listenerKeys_.push(ol.events.listen(this.features_,
+        ol.Collection.EventType.ADD, this.handleFeatureAdd_, this));
+    this.listenerKeys_.push(ol.events.listen(this.features_,
+        ol.Collection.EventType.REMOVE, this.handleFeatureRemove_, this));
+
+  } else {
+    this.listenerKeys_.forEach(function(key) {
+      ol.events.unlistenByKey(key);
+    }, this);
+    this.features_.forEach(this.removeFeature_, this);
+  }
+};
+
+
+/**
+ * @param {ol.Feature} feature Feature.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.addFeature_ = function(feature) {
+  var geometry = feature.getGeometry();
+  goog.asserts.assertInstanceof(geometry, ol.geom.Geometry);
+
+  feature.set('angle', 0);
+
+  // Add the center icon to the overlay
+  var uid = goog.getUid(feature);
+  var point = new ol.geom.Point(this.getCenterCoordinate_(geometry));
+  var centerFeature = new ol.Feature(point);
+  this.centerFeatures_[uid] = centerFeature;
+  this.overlay_.getSource().addFeature(centerFeature);
+
+};
+
+
+/**
+ * @param {ol.MapBrowserPointerEvent} evt Map browser event
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.willModifyFeatures_ = function(evt) {
+  if (!this.modified_) {
+    this.modified_ = true;
+    this.dispatchEvent(new ol.interaction.Modify.Event(
+        ol.interaction.Modify.EventType.MODIFYSTART, this.features_, evt));
+  }
+};
+
+
+/**
+ * @param {ol.Feature} feature Feature.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.removeFeature_ = function(feature) {
+  this.feature_ = null;
+  //this.overlay_.getSource().removeFeature(feature);
+
+  if (feature) {
+    var uid = goog.getUid(feature);
+
+    if (this.centerFeatures_[uid]) {
+      this.overlay_.getSource().removeFeature(this.centerFeatures_[uid]);
+      delete this.centerFeatures_[uid];
+    }
+  }
+};
+
+
+/**
+ * @inheritDoc
+ */
+ngeo.interaction.Rotate.prototype.setMap = function(map) {
+  this.overlay_.setMap(map);
+  ol.interaction.Pointer.prototype.setMap.call(this, map);
+};
+
+
+/**
+ * @param {ol.Collection.Event} evt Event.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleFeatureAdd_ = function(evt) {
+  var feature = evt.element;
+  goog.asserts.assertInstanceof(feature, ol.Feature,
+      'feature should be an ol.Feature');
+  this.addFeature_(feature);
+};
+
+
+/**
+ * @param {ol.Collection.Event} evt Event.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleFeatureRemove_ = function(evt) {
+  var feature = /** @type {ol.Feature} */ (evt.element);
+  this.removeFeature_(feature);
+};
+
+
+/**
+ * @param {ol.MapBrowserPointerEvent} evt Event.
+ * @return {boolean} Start drag sequence?
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleDown_ = function(evt) {
+  var map = evt.map;
+
+  var feature = map.forEachFeatureAtPixel(evt.pixel,
+      function(feature, layer) {
+        return feature;
+      }, undefined);
+
+  if (feature) {
+    var found = false;
+    this.features_.forEach(function(f) {
+      if (goog.getUid(f) == goog.getUid(feature)) {
+        found = true;
+      }
+    });
+    if (!found) {
+      feature = null;
+    }
+  }
+
+  if (feature) {
+    this.coordinate_ = evt.coordinate;
+    this.feature_ = feature;
+    var geometry = (this.feature_.getGeometry());
+    if (geometry !== undefined) {
+      this.centerCoordinate_ = this.getCenterCoordinate_(geometry);
+    }
+
+    return true;
+  }
+
+  return false;
+};
+
+
+/**
+ * @param {ol.geom.Geometry} geometry Geometry.
+ * @return {ol.Coordinate} The center coordinate of the geometry.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.getCenterCoordinate_ = function(
+    geometry) {
+
+  var center;
+
+  if (geometry instanceof ol.geom.LineString) {
+    center = geometry.getFlatMidpoint();
+  } else if (geometry instanceof ol.geom.Polygon) {
+    center = geometry.getFlatInteriorPoint();
+  } else {
+    var extent = geometry.getExtent();
+    center = ol.extent.getCenter(extent);
+  }
+
+  return center;
+};
+
+
+/**
+ * @param {ol.MapBrowserPointerEvent} evt Event.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleDrag_ = function(evt) {
+  this.willModifyFeatures_(evt);
+
+  var geometry = /** @type {ol.geom.SimpleGeometry} */
+      (this.feature_.getGeometry());
+
+  var oldX = this.coordinate_[0], oldY = this.coordinate_[1];
+
+  var centerX = this.centerCoordinate_[0];
+  var centerY = this.centerCoordinate_[1];
+
+  var dx1 = oldX - centerX;
+  var dy1 = oldY - centerY;
+  var dx0 = evt.coordinate[0] - centerX;
+  var dy0 = evt.coordinate[1] - centerY;
+
+  this.coordinate_[0] = evt.coordinate[0];
+  this.coordinate_[1] = evt.coordinate[1];
+
+  var a0 = Math.atan2(dy0, dx0);
+  var a1 = Math.atan2(dy1, dx1);
+  var angle = a1 - a0;
+
+  geometry.rotate(-angle, [centerX, centerY]);
+};
+
+
+/**
+ * @param {ol.MapBrowserPointerEvent} evt Event.
+ * @return {boolean} Stop drag sequence?
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleUp_ = function(evt) {
+  if (this.modified_) {
+    this.dispatchEvent(new ngeo.RotateEvent(ngeo.RotateEventType.ROTATEEND,
+      this.feature_));
+    this.modified_ = false;
+    this.setActive(false);
+  }
+  return false;
+};
+
+
+/**
+ * Deactivate this interaction if the ESC key is pressed.
+ * @param {goog.events.Event} evt Event.
+ * @private
+ */
+ngeo.interaction.Rotate.prototype.handleKeyUp_ = function(evt) {
+  if (evt.keyCode === goog.events.KeyCodes.ESC) {
+    this.setActive(false);
   }
 };
 
@@ -117331,6 +117620,7 @@ ngeo.module.service('ngeoBackgroundLayerMgr', ngeo.BackgroundLayerMgr);
 
 goog.provide('ngeo.CreateGeoJSONBloodhound');
 
+goog.require('goog.object');
 goog.require('ngeo');
 goog.require('ol.format.GeoJSON');
 
@@ -117586,6 +117876,7 @@ goog.provide('ngeo.CreatePopup');
 goog.provide('ngeo.Popup');
 
 goog.require('ngeo');
+goog.require('goog.asserts');
 
 /**
  * This goog.require is needed because of 'ngeo-popup' used in
@@ -122719,6 +123010,7 @@ goog.require('ol.style.Image');
 goog.require('ol.style.Stroke');
 goog.require('ol.style.Style');
 goog.require('ol.style.Text');
+goog.require('ol.style.RegularShape');
 goog.require('ol.tilegrid.WMTS');
 
 
@@ -123334,7 +123626,7 @@ ngeo.Print.prototype.encodeVectorStylePoint_ = function(symbolizers, imageStyle)
      * Mapfish Print does not support image defined with ol.style.RegularShape.
      * As a workaround, I try to map the image on a well-known image name.
      */
-    var points = imageStyle.getPoints();
+    var points = /** @type{ol.style.RegularShape} */ (imageStyle).getPoints();
     if (points !== null) {
       symbolizer = /** @type {MapFishPrintSymbolizerPoint} */ ({
         type: 'point'
@@ -126864,6 +127156,11 @@ goog.exportSymbol(
 
 goog.exportProperty(
     ol.View.prototype,
+    'animate',
+    ol.View.prototype.animate);
+
+goog.exportProperty(
+    ol.View.prototype,
     'calculateExtent',
     ol.View.prototype.calculateExtent);
 
@@ -128207,10 +128504,6 @@ goog.exportSymbol(
 goog.exportSymbol(
     'ol.extent.isEmpty',
     ol.extent.isEmpty);
-
-goog.exportSymbol(
-    'ol.featureloader.tile',
-    ol.featureloader.tile);
 
 goog.exportSymbol(
     'ol.featureloader.xhr',
