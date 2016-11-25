@@ -24,7 +24,7 @@ goog.require('ngeo.modules.search');
 
 /** @type {!angular.Module} */
 ngeo.module = angular.module('ngeo', [
-    ngeo.modules.search.name,
+    ngeo.modules.search.module.name,
     'gettext', 'ui.date', 'floatThead'
 ]);
 
