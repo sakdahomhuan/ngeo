@@ -66,10 +66,18 @@
           <div ng-show="mainCtrl.oeEditActive" class="row">
             <div class="col-sm-12">
               <div class="gmf-app-tools-content-heading">
-                {{'Object Edititing' | translate}}
+                {{'Object Editing' | translate}}
                 <a class="btn close" ng-click="mainCtrl.oeEditActive = false">&times;</a>
               </div>
-              Edit
+              <gmf-objectediting
+                ng-if="mainCtrl.oeFeature && mainCtrl.oeLayerNodeId"
+                gmf-objectediting-active="mainCtrl.oeActive"
+                gmf-objectediting-feature="mainCtrl.oeFeature"
+                gmf-objectediting-geomtype="::mainCtrl.oeGeomType"
+                gmf-objectediting-layernodeid="::mainCtrl.oeLayerNodeId"
+                gmf-objectediting-map="::mainCtrl.map"
+                gmf-objectediting-sketchfeatures="::mainCtrl.sketchFeatures">
+              </gmf-objectediting>
             </div>
           </div>
         </div>
@@ -158,7 +166,7 @@
     <script src="../../../../lib/watchwatchers.js"></script>
     <script>
       (function() {
-        var cacheVersion = '3ffcc39be72084d9f540467cb7ad16899486d131';
+        var cacheVersion = '8ccf5c254d522568a78706e8665ee4da8ee6fa21';
         var urlElements = window.location.pathname.split('/');
 
         var angularLocaleScriptUrlElements = urlElements.slice(0, urlElements.length - 3);
@@ -175,7 +183,7 @@
         });
 
         var module = angular.module('app');
-        module.constant('defaultTheme', 'OSM');
+        module.constant('defaultTheme', 'ObjectEditing');
         module.constant('defaultLang', 'en');
         module.constant('langUrls', langUrls);
         module.constant('cacheVersion', cacheVersion);
